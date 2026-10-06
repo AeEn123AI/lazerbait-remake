@@ -14,8 +14,8 @@ The original game files (`/home/ai/Lazerbait`) were used as the reference:
 * **Scenes**: the `startMenu` and `sample` scenes and the prefabs were dumped from the asset files with UnityPy
   (transforms, TextMesh texts/sizes/anchors/colours, materials, lights, audio volumes, particle settings), and are
   rebuilt in code from those exact values (`scripts/core/u.gd` converts Unity's left-handed coordinates).
-* **Assets**: meshes, textures, skybox, fonts, music, sound effects and the three tutorial videos (Theora) were
-  extracted from the original data files.
+* **Assets**: meshes, textures, skybox, fonts, music, sound effects and the three tutorial videos (Theora) are
+  extracted from your copy of the original data files by `tools/extract_assets.py`.
 * **Engine behaviour**: the original depended on Unity specifics, and these are emulated:
   * the 0.08 s fixed physics step, with interpolated kinematic bodies (this sets the ship orbit speed);
   * trigger enter/exit semantics (disabling a collider silently drops its contacts);
@@ -24,13 +24,58 @@ The original game files (`/home/ai/Lazerbait`) were used as the reference:
   * `Time.timeScale` pausing;
   * 90 Hz frame-count based logic, made refresh-rate independent with a virtual frame counter.
 
+## Setup (from source)
+This repository contains **no assets from the original game**. You need your own copy of Lazerbait
+(Steam app 529150, Windows build). The setup script extracts everything the remake needs from it.
+
+### Requirements
+* [Godot 4.6](https://godotengine.org/download) (standard build, not .NET)
+* Python 3.9+ with the packages in `tools/requirements.txt` (UnityPy, numpy, Pillow)
+* [ffmpeg](https://ffmpeg.org/) on your PATH (converts the music to Ogg Vorbis)
+* Internet access once, to download the Godot OpenXR Vendors plugin (MIT licensed)
+
+### Steps
+```sh
+git clone <this repo> lazerbait-remake
+cd lazerbait-remake
+python3 -m pip install -r tools/requirements.txt      # or use a virtualenv
+python3 tools/setup.py "/path/to/steamapps/common/Lazerbait"
+```
+`tools/setup.py` does three things:
+1. runs `tools/extract_assets.py`, which reads `lazerbait_Data` and writes `assets/`: textures, skybox, meshes
+   (converted to Godot's coordinate system), fonts, music/SFX, tutorial videos and the explosion particle data;
+2. downloads the OpenXR Vendors plugin into `addons/godotopenxrvendors/`;
+3. runs `godot --headless --import` (set the `GODOT` environment variable or pass `--godot PATH` if the executable
+   isn't called `godot`).
+
+Each step can be skipped with `--skip-assets`, `--skip-addons` or `--skip-import`, and the extractor can be run on its
+own: `python3 tools/extract_assets.py <game dir> [--out assets]`. The game folder may be the install folder or its
+`lazerbait_Data` folder; a Windows install copied to Linux/macOS works fine.
+
+If you run the project without the assets, it shows a message explaining how to extract them.
+
 ## Running
-Open the folder in Godot 4.6 and press Play, or export with the included presets (Linux / Windows).
+Open the folder in the Godot 4.6 editor and press Play, or run `godot --path .`.
 
 * **VR**: start with an OpenXR runtime active (SteamVR, Meta Quest Link, Monado, WMR...). VR is chosen automatically
   when a headset is available.
 * **Desktop**: used automatically when no headset is available. To force it, run with `--xr-mode off` or `-- --desktop`.
 * Jump straight into a match with your saved menu settings: `godot --path . -- --game`
+
+## Building
+1. Install the Godot 4.6 export templates (Editor → Manage Export Templates, or download them from godotengine.org).
+2. Export with one of the included presets, from the editor (Project → Export) or the command line:
+   ```sh
+   godot --headless --path . --export-release "Linux"           build/linux/Lazerbait.x86_64
+   godot --headless --path . --export-release "Windows Desktop" build/windows/Lazerbait.exe
+   ```
+   The `build/` folder must exist first. Keep the `.pck` and the `libgodotopenxrvendors` library next to the
+   executable.
+3. Standalone Meta Quest (optional): install the Android export templates and SDK, add an Android preset with
+   XR Mode = OpenXR, and enable the vendors plugin's Meta options. Use the Mobile renderer.
+
+Exported builds contain the extracted assets, so **don't redistribute them**. Only the source is meant to be
+shared.
 
 ## Controls
 
@@ -73,8 +118,6 @@ room shows through, and the platform and planets stay visible.
   Link), HTC, Pico and Android XR support. The `meta/passthrough` and `htc/passthrough` extensions are enabled in the
   project settings.
 * If the device can't do passthrough, the menu shows "Passthrough = On (unsupported)" and the game stays opaque.
-* For a standalone Quest build: install the Android export templates and SDK, add an Android preset with
-  XR Mode = OpenXR, and enable the Meta plugin options of the vendors plugin.
 
 ## Project layout
 ```
@@ -86,7 +129,9 @@ scripts/game/               MasterController, Ship, Planet, PlanetController, AI
                             LeftControllerHandler, GameLevel
 scripts/fx/                 lines, lasers, explosions, sun, star field, wireframe
 shaders/                    6-sided skybox, Unity legacy particle / line shaders, sun, wireframe, fade
-assets/                     assets extracted from the original game
+tools/                      setup.py, extract_assets.py, requirements.txt
+assets/                     created by tools/setup.py (not in git, except the Liberation Sans font)
+addons/                     created by tools/setup.py (OpenXR Vendors plugin)
 ```
 
 ## Differences from the original (and why)
@@ -110,5 +155,5 @@ See `scripts/core/debug.gd`. Test runs started with `--autotest` or `--ai-player
 
 ## Credits
 Original game © Taylor Stapleton. Music, sound effects, textures, fonts and tutorial videos come from the original
-game files. Liberation Sans: SIL Open Font License (see `assets/fonts/LiberationSans-LICENSE.txt`). The Godot OpenXR
+game files and are not included in this repository. Liberation Sans: SIL Open Font License (see `assets/fonts/LiberationSans-LICENSE.txt`). The Godot OpenXR
 Vendors plugin is MIT licensed, and the vendor loaders keep their own licences (see the addon folder).
