@@ -1,0 +1,16 @@
+# Godot
+.godot/
+build/
+*.tmp
+
+# Assets extracted from the original game (copyrighted) - recreate with tools/setup.py
+/assets/*
+!/assets/fonts/
+/assets/fonts/*
+!/assets/fonts/LiberationSans-Regular.ttf
+!/assets/fonts/LiberationSans-LICENSE.txt
+
+# Downloaded by tools/setup.py
+/addons/godotopenxrvendors/
+
+__pycache__/
