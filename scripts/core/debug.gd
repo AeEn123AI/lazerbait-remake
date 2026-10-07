@@ -6,6 +6,8 @@ extends Node
 ##   --shots=T:PATH,...     save screenshots of the main viewport at T seconds
 ##   --cam=x,y,z,yaw,pitch  desktop camera override (degrees), applied once the level is loaded
 ##   --settings=k=v;k=v     override Settings fields (e.g. player_setting_count=1)
+##   --net-demo             versus: after a few seconds, send + link from the home planet
+##                          to its nearest neighbour through MasterController.command_send
 
 var autotest := -1.0
 var ai_player1 := false
@@ -21,6 +23,8 @@ var desktop_menu := false
 var explosion_test := false
 var _boom_t := 0.0
 var _demo_done := false
+var net_demo := false
+var _net_demo_done := false
 
 
 func _ready() -> void:
@@ -37,6 +41,8 @@ func _ready() -> void:
 			cpu_particles = true
 		elif a == "--demo-select":
 			demo_select = true
+		elif a == "--net-demo":
+			net_demo = true
 		elif a == "--ai-player1":
 			ai_player1 = true
 			Stats.persist = false
@@ -133,6 +139,9 @@ func _process(delta: float) -> void:
 			var right := cam.global_transform.basis.x
 			for i in 9:
 				m.spawn_explosion(i, cam.global_position + fwd * 3.0 + right * (float(i) - 4.0) * 0.45)
+	if net_demo and not _net_demo_done and m and m.planets.size() > 0 and _t > 6.0:
+		_net_demo_done = true
+		_net_demo(m)
 	if demo_select and not _demo_done and m and _t > 2.5:
 		_demo_done = true
 		_demo(m)
@@ -169,8 +178,24 @@ func _report(m: MasterController) -> void:
 		if s.in_orbit:
 			orbit += 1
 	print("[perf] fps=%d" % Engine.get_frames_per_second())
+	if m.net_role != Net.Role.OFFLINE:
+		var links := []
+		for src in m.planet_links.keys():
+			links.append("%s:%d->%d" % [src.player, src.id, m.planet_links[src].id])
+		print("[net] role=%d local=%s links=%s paused=%s snapshot=%dB" % [m.net_role, m.local_player, links, GameTime.paused(), m._build_snapshot().size() if m.net_role == Net.Role.HOST else 0])
 	print("[autotest] t=%.1f game_t=%.1f planets=%d owned=%s ships=%d (orbit %d) counts=%s limits=%s links=%d over=%s" % [
 		_t, GameTime.time, m.planets.size(), owned, m.ships.size(), orbit, counts, m.ship_limits, m.planet_links.size(), m._game_over])
+
+
+func _net_demo(m: MasterController) -> void:
+	for p in m.planets:
+		if p.player == m.local_player:
+			var near: Array = m.get_planets_in_range(p)
+			near.sort_custom(func(a, b): return a.position.distance_to(p.position) < b.position.distance_to(p.position))
+			if near.size() > 0:
+				print("[net-demo] %s sends %d -> %d (%d ships there)" % [m.local_player, p.id, near[0].id, p.ships.size()])
+				m.command_send(p, near[0], 1.0, true)
+			return
 
 
 ## Select the home planet, hover a planet in range and draw a link to another one.

@@ -17,6 +17,7 @@ Settings="*res://scripts/core/settings.gd"
 Stats="*res://scripts/core/stats.gd"
 GameTime="*res://scripts/core/game_time.gd"
 XRManager="*res://scripts/core/xr_manager.gd"
+Net="*res://scripts/core/net.gd"
 Debug="*res://scripts/core/debug.gd"
 
 [display]

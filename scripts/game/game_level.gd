@@ -25,6 +25,7 @@ var _end_planets: Array = []
 var _end_texts: Array = []
 var _music_muted := false
 var _leaving := false
+var _net_texts: Array = []
 
 
 func setup(p_main, p_rig: PlayerRig) -> void:
@@ -48,15 +49,26 @@ func setup(p_main, p_rig: PlayerRig) -> void:
 	add_child(click_handler)
 	add_child(left_handler)
 	click_handler.setup(self, rig, master)
+	master.map_ready.connect(_on_map_ready)
+	if Net.versus():
+		Net.remote_left.connect(_on_remote_left)
+		if Net.is_client():
+			show_net_message("Waiting for the host...")
 	master.start_game(self, rig)
 	click_handler.left_handler = left_handler
 	left_handler.setup(rig, master, click_handler)
-	click_handler.set_player_color(Settings.player_color)
-	if not rig.vr:
-		_setup_desktop_view()
 	XRManager.passthrough_changed.connect(_on_passthrough_changed)
 	_on_passthrough_changed(XRManager.passthrough_active)
 	main.apply_quality(sun_light)
+
+
+## The planets exist (a versus client gets the map from the host a moment after loading).
+func _on_map_ready() -> void:
+	click_handler.set_player_color(master.local_color())
+	if Net.is_client():
+		show_net_message("")
+	if not rig.vr:
+		_setup_desktop_view()
 
 
 func _setup_desktop_view() -> void:
@@ -76,8 +88,12 @@ func _setup_desktop_view() -> void:
 	rig.set_rig_position(home + away * 6.0)
 	var look := Vector3(0, 15.0, 0)
 	rig.reset_desktop_view(look)
-	rig.set_help_text("LMB: select / drag to link   1-4: % of ships   Tab: mini-map   Esc: menu   P: pause\n" +
+	_desktop_help = ("LMB: select / drag to link   1-4: % of ships   Tab: mini-map   Esc: menu   P: pause\n" +
 		"RMB drag: look   WASD/QE: move   Shift: fast   Wheel: forward/back   MMB drag: pan   H: hide help")
+	rig.set_help_text(_desktop_help)
+
+
+var _desktop_help := ""
 
 
 func _build_environment() -> void:
@@ -249,6 +265,38 @@ func show_end_game(winner: bool) -> void:
 		t.visible = true
 
 
+## Versus status text, shown in the four directions like the end-game texts ("" hides it).
+func show_net_message(msg: String) -> void:
+	if _net_texts.is_empty():
+		var col := Color(1, 1, 1, 1)
+		for w in [
+				[Vector3(0, 10, 20), Quaternion(-0.2588, 0, 0, 0.9659)],
+				[Vector3(0, 10, -20), Quaternion(4.217e-08, 0.9659, 0.2588, -1.574e-07)],
+				[Vector3(20, 10, 0), Quaternion(-0.183, 0.683, 0.183, 0.683)],
+				[Vector3(-20, 10, 0), Quaternion(0.183, 0.683, 0.183, -0.683)]]:
+			_net_texts.append(UI3D.make(rig.content, "", "pixel", 27, 100, 4, col, w[0], w[1], Vector3(0.012, 0.012, 0.001), false))
+	for t in _net_texts:
+		t.text = msg
+		t.visible = msg != ""
+	if not rig.vr:
+		rig.set_help_text(msg if msg != "" else _desktop_help)
+
+
+## The other player disconnected (or the host left).
+func _on_remote_left() -> void:
+	if master.net_role == Net.Role.HOST:
+		master.on_remote_left()
+		if not master._game_over:
+			show_net_message("Opponent left - the A.I. takes over")
+	else:
+		show_net_message("Connection to the host was lost")
+		for p in _end_planets:
+			p.mesh.visible = true
+			p.set_collider_enabled(true)
+		for t in _end_texts:
+			t.visible = true
+
+
 func return_to_menu() -> void:
 	if _leaving:
 		return
@@ -271,6 +319,10 @@ func _on_passthrough_changed(active: bool) -> void:
 
 
 func teardown() -> void:
+	if Net.remote_left.is_connected(_on_remote_left):
+		Net.remote_left.disconnect(_on_remote_left)
+	if Net.role != Net.Role.OFFLINE:
+		Net.leave_match()
 	if XRManager.passthrough_changed.is_connected(_on_passthrough_changed):
 		XRManager.passthrough_changed.disconnect(_on_passthrough_changed)
 	GameTime.time_scale = 1.0

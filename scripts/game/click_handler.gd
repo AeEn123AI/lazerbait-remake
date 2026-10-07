@@ -175,6 +175,7 @@ func _process(_delta: float) -> void:
 	_init_clicks_per_frame()
 	if _menu_click:
 		_toggle_pause()
+	paused_text.visible = GameTime.paused() # versus: either player can pause
 	var origin := hand.pointer_origin()
 	var dir := hand.pointer_dir()
 	var hits := Picker.raycast_all(origin, dir, distance)
@@ -253,7 +254,7 @@ func _process(_delta: float) -> void:
 			if sel2 != null:
 				sel2.node.erase_line()
 				sel2.node.erase_link()
-				master.delete_link(sel2)
+				master.command_unlink(sel2)
 	sel2 = master.player["selected_planet"]
 	if _dragging and not flag and sel2 != null:
 		var vector2 := _drag_point(sel2)
@@ -313,12 +314,8 @@ func _magnet_check(planet: Planet, tip: Vector3) -> bool:
 
 
 func _toggle_pause() -> void:
-	if GameTime.time_scale == 0.0:
-		GameTime.time_scale = 1.0
-		paused_text.visible = false
-	else:
-		GameTime.time_scale = 0.0
-		paused_text.visible = true
+	master.command_pause()
+	paused_text.visible = GameTime.paused()
 
 
 func _grip_logic() -> void:
@@ -505,48 +502,44 @@ func _deselect() -> void:
 	if sel != null:
 		sel.node.deselect()
 		sel.node.erase_link()
-		master.delete_link(sel)
+		master.command_unlink(sel)
 
 
 func _select(pc: PlanetController, link: bool) -> void:
 	var sel = master.player["selected_planet"]
-	if sel == null and pc.parent.player == "Player1":
+	var me := master.local_player
+	if sel == null and pc.parent.player == me:
 		pc.erase_link()
-		master.delete_link(pc.parent)
+		master.command_unlink(pc.parent)
 	if sel != null:
 		if sel == pc.parent:
 			_play(A.sfx("slide_electronic_01"), 0.3)
 			pc.erase_link()
-			master.delete_link(pc.parent)
+			master.command_unlink(pc.parent)
 			pc.deselect()
 			return
 		var selected_planet: Planet = sel
-		if selected_planet.player != "Player1":
+		if selected_planet.player != me:
 			return
 		if selected_planet.node.planet_range < selected_planet.node.global_position.distance_to(pc.global_position):
 			_play(A.sfx("click_electronic_16"), 0.3)
 			return
 		if master.get_planet_assignment(pc.parent) == selected_planet:
-			master.delete_link(pc.parent)
 			pc.parent.node.erase_link()
-		master.send_wave(selected_planet, pc.parent, get_percentage())
+		# send_wave + link bookkeeping (forwarded to the host in versus mode)
+		master.command_send(selected_planet, pc.parent, get_percentage(), link)
 		selected_planet.node.deselect()
 		selected_planet.node.erase_link()
-		master.delete_link(selected_planet)
 		if link:
-			if master.get_planet_assignment(pc.parent) == selected_planet:
-				master.delete_link(pc.parent)
-				pc.erase_link()
 			_play(A.sfx("click_electronic_14"), 0.5)
-			master.establish_link(selected_planet, pc.parent)
 			selected_planet.node.draw_link_to_planet(pc.parent)
 		else:
 			_play(A.sfx("click_electronic_14"), 0.5)
-	elif pc.parent.player == "Player1":
+	elif pc.parent.player == me:
 		if link:
 			_play(A.sfx("slide_electronic_01"), 0.3)
 			pc.erase_link()
-			master.delete_link(pc.parent)
+			master.command_unlink(pc.parent)
 		else:
 			_play(A.sfx("click_electronic_14"), 0.5)
 			master.player["selected_planet"] = pc.parent

@@ -71,6 +71,14 @@ var _has_been_played := false
 var _videos: Array = []
 var _leaving := false
 
+# versus (network) panel - remake addition
+var net_host_text: Label3D
+var net_join_text: Label3D
+var net_next_text: Label3D
+var net_status_text: Label3D
+var _host_index := 0
+var _address_box: LineEdit
+
 
 func setup(p_main, p_rig: PlayerRig) -> void:
 	main = p_main
@@ -92,6 +100,7 @@ func setup(p_main, p_rig: PlayerRig) -> void:
 	main.apply_quality(light)
 	performance_warning.visible = Settings.ship_setting_count == 3
 	_late_init_ships()
+	_build_net_panel()
 	if rig.vr:
 		var lp := LaserPointer.new()
 		rig.right.ui.add_child(lp)
@@ -104,7 +113,8 @@ func setup(p_main, p_rig: PlayerRig) -> void:
 		rig.allow_vertical = false
 		rig.desktop_move_speed = 1.5
 		rig.set_desktop_yaw_pitch(0.0, deg_to_rad(-8.0))
-		rig.set_help_text("LMB: click planets / tutorials   RMB drag: look around   WASD: move   F11: fullscreen   H: hide help")
+		rig.set_help_text("LMB: click planets / tutorials   RMB drag: look around   WASD: move   F11: fullscreen   H: hide help\n" +
+			"Versus: the panel behind you on the left   J: join a game by address")
 	XRManager.passthrough_changed.connect(_on_passthrough_changed)
 	_on_passthrough_changed(XRManager.passthrough_active)
 
@@ -465,6 +475,7 @@ func _process(_d: float) -> void:
 			"start":
 				if _left_click:
 					hand.vibrate(0.1, 0.3)
+					Net.close() # single player: stop hosting / searching
 					_apply_settings()
 					_leaving = true
 					main.change_level("game")
@@ -494,6 +505,10 @@ func _process(_d: float) -> void:
 					Settings.quality_index = (Settings.quality_index + 1) % Settings.QUALITY_NAMES.size()
 					graphics_text.text = "Graphics = " + Settings.QUALITY_NAMES[Settings.quality_index]
 					main.apply_quality(light)
+			"NetHost", "NetJoin", "NetNext":
+				if _left_click:
+					hand.vibrate(0.05, 0.2)
+					_net_click(pc.menu_label)
 			"Passthrough":
 				if _left_click:
 					hand.vibrate(0.05, 0.2)
@@ -641,7 +656,136 @@ func _on_passthrough_changed(active: bool) -> void:
 	_update_passthrough_text()
 
 
+# ------------------------------------------------------------------ versus panel (remake addition)
+
+func _build_net_panel() -> void:
+	var c := rig.content
+	var w := Color.WHITE
+	# back-left corner (Unity coordinates), turned to face the player at the centre
+	var yaw := deg_to_rad(-122.0)
+	var rot := Quaternion(Vector3.UP, yaw)
+	var right := Vector3(cos(yaw), 0, -sin(yaw))
+	var base := Vector3(-1.55, 0, -1.25)
+	var at := func(x: float, y: float) -> Vector3: return base + right * x + Vector3(0, y, 0)
+	var s8 := Vector3(0.008, 0.008, 0.008)
+	UI3D.make(c, "Versus (network):", "pixel", 1.8, 100, 0, w, at.call(-0.3, 1.75), rot, Vector3(0.011, 0.011, 0.011))
+	_menu_planet("NetHost", at.call(-0.15, 1.35), 0.2, 0.4)
+	_menu_planet("NetJoin", at.call(-0.15, 0.95), 0.2, 0.4)
+	_menu_planet("NetNext", at.call(-0.15, 0.6), 0.12, 0.4)
+	net_host_text = UI3D.make(c, "", "pixel", 1.8, 100, 3, w, at.call(0.05, 1.35), rot, s8)
+	net_join_text = UI3D.make(c, "", "pixel", 1.8, 100, 3, w, at.call(0.05, 0.95), rot, s8)
+	net_next_text = UI3D.make(c, "", "pixel", 1.8, 100, 3, w, at.call(0.05, 0.6), rot, s8)
+	net_status_text = UI3D.make(c, "", "pixel", 1.8, 100, 0, Color(0.7, 0.9, 1.0), at.call(-0.3, 0.4), rot, Vector3(0.005, 0.005, 0.005))
+	Net.status_changed.connect(_on_net_status)
+	Net.hosts_changed.connect(_update_net_texts)
+	Net.match_starting.connect(_on_match_starting)
+	_update_net_texts()
+	if not rig.vr:
+		_address_box = LineEdit.new()
+		_address_box.placeholder_text = "Host address (e.g. 192.168.1.20) - Enter to join, Esc to cancel"
+		_address_box.custom_minimum_size = Vector2(520, 0)
+		_address_box.position = Vector2(12, 80)
+		_address_box.visible = false
+		_address_box.text_submitted.connect(_on_address_submitted)
+		_address_box.gui_input.connect(_on_address_input)
+		rig.desktop_hud.add_child(_address_box)
+
+
+func _unhandled_key_input(event: InputEvent) -> void:
+	if _address_box == null or _leaving:
+		return
+	var k := event as InputEventKey
+	if k and k.pressed and not k.echo and k.keycode == KEY_J and not _address_box.visible:
+		_address_box.visible = true
+		_address_box.text = ""
+		_address_box.grab_focus()
+		rig.desktop_controls_enabled = false
+		get_viewport().set_input_as_handled()
+
+
+func _on_address_input(event: InputEvent) -> void:
+	var k := event as InputEventKey
+	if k and k.pressed and k.keycode == KEY_ESCAPE:
+		_close_address_box()
+		_address_box.accept_event()
+
+
+func _close_address_box() -> void:
+	_address_box.visible = false
+	_address_box.release_focus()
+	rig.desktop_controls_enabled = true
+
+
+func _on_address_submitted(text: String) -> void:
+	_close_address_box()
+	if text.strip_edges() != "":
+		Net.join(text)
+		_update_net_texts()
+
+
+func _net_click(label: String) -> void:
+	match label:
+		"NetHost":
+			if Net.is_host():
+				Net.close()
+			else:
+				Net.host()
+		"NetJoin":
+			var hosts := Net.found_hosts.values()
+			if Net.is_client() or Net.is_host():
+				Net.close()
+			elif hosts.is_empty():
+				Net.start_search()
+			else:
+				var h: Dictionary = hosts[_host_index % hosts.size()]
+				Net.join(h["ip"], h["port"])
+		"NetNext":
+			_host_index += 1
+	_update_net_texts()
+
+
+func _update_net_texts() -> void:
+	var hosts := Net.found_hosts.values()
+	net_host_text.text = "Stop Hosting" if Net.is_host() else "Host a Game"
+	if Net.is_client():
+		net_join_text.text = "Cancel"
+	elif Net.is_host():
+		net_join_text.text = "Find Games"
+	elif hosts.is_empty():
+		net_join_text.text = "Find Games"
+	else:
+		var h: Dictionary = hosts[_host_index % hosts.size()]
+		net_join_text.text = "Join %s" % h["name"]
+	var show_next := hosts.size() > 1 and not Net.is_client()
+	net_next_text.text = "Next Game (%d/%d)" % [_host_index % maxi(hosts.size(), 1) + 1, hosts.size()] if show_next else ""
+	planets["NetNext"].mesh.visible = show_next
+	planets["NetNext"].set_collider_enabled(show_next)
+	var st := Net.status
+	if st == "":
+		st = "Play against a friend on your network.\nThe host's menu settings are used;\nextra players are A.I.s."
+	net_status_text.text = st
+
+
+func _on_net_status(_t: String) -> void:
+	_update_net_texts()
+
+
+func _on_match_starting() -> void:
+	if _leaving:
+		return
+	if Net.is_host():
+		_apply_settings()
+		Net.begin_match()
+	_leaving = true
+	main.change_level("game")
+
+
 func teardown() -> void:
+	for pair in [[Net.status_changed, _on_net_status], [Net.hosts_changed, _update_net_texts], [Net.match_starting, _on_match_starting]]:
+		if pair[0].is_connected(pair[1]):
+			pair[0].disconnect(pair[1])
+	if _address_box:
+		_address_box.queue_free()
 	if XRManager.passthrough_changed.is_connected(_on_passthrough_changed):
 		XRManager.passthrough_changed.disconnect(_on_passthrough_changed)
 	if video:

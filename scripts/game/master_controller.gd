@@ -7,6 +7,12 @@ extends Node3D
 const FIXED_TIMESTEP := 0.08  # TimeManager "Fixed Timestep" of the original project
 const SHIP_SCALE := 2.5       # Ship prefab localScale
 const VOLUME := 0.1
+const POS_SCALE := 256.0       # versus snapshots: positions as int16 / 256 (+-128 units)
+const INTERP_DELAY := 0.12     # versus client: render this far behind the newest snapshot
+
+## Emitted once the planets exist (immediately offline / on the host, when the map arrives
+## on a versus client).
+signal map_ready
 
 # ------------------------------------------------------------------ Env.cs
 class Env:
@@ -75,6 +81,24 @@ var _ship_mm: MultiMeshInstance3D
 var _lasers: LaserBatch
 var _mm_capacity := 0
 
+# versus mode (see Net). The host simulates everything; the client mirrors snapshots.
+var net_role := 0              # Net.Role
+var local_player := "Player1"  # the player this machine controls
+var human_players := ["Player1"]
+var _player_index := {}        # player name -> index in environment.player_names
+var _snap_timer := 0.0
+var _remote_ack := 0           # host: last command sequence number applied
+var _remote_kills := 0         # host: enemy ships destroyed by Player2
+var _remote_result := -1       # host: result sent to the client (-1 none, 0 lost, 1 won)
+var _client_ships := {}        # client: ship id -> Ship
+var _snaps: Array = []         # client: received, not yet applied snapshots
+var _cur_snap_t := -1.0
+var _latest_t := -1.0
+var _render_time := -1.0
+var _pending_links := {}       # client: Planet -> command seq whose link change isn't confirmed yet
+var _cmd_seq := 0
+var _kills_seen := 0
+
 
 func _make_explosion_colors() -> void:
 	explosion_colors = [
@@ -101,6 +125,13 @@ func explosion_index(c: Color) -> int:
 func start_game(p_level, p_rig: PlayerRig) -> void:
 	level = p_level
 	rig = p_rig
+	if Net.in_match:
+		net_role = Net.role
+		human_players = ["Player1", "Player2"]
+		if net_role == Net.Role.CLIENT:
+			local_player = "Player2"
+	for i in environment.player_names.size():
+		_player_index[environment.player_names[i]] = i
 	_make_explosion_colors()
 	explosions = ExplosionPool.new()
 	add_child(explosions)
@@ -123,12 +154,19 @@ func start_game(p_level, p_rig: PlayerRig) -> void:
 		var ai := AIController.new()
 		ai.player_name = "Player%d" % i
 		ai.update_ai_this_often = [1.0, 1.1, 1.2, 9.5, 10.0, 10.5, 11.0][i - 2]
-		ai.is_ai_enabled = i == 2
+		ai.is_ai_enabled = i == 2 and net_role == Net.Role.OFFLINE
 		ai.master = self
 		ais.append(ai)
 
 	_apply_game_settings()
 	_populate_ship_counter()
+	if net_role == Net.Role.CLIENT:
+		Net.map_received.connect(_client_build_map)
+		Net.snapshot_received.connect(_client_on_snapshot)
+		Net.game_over_received.connect(func(won: bool): _end_game(won))
+		if not Net.pending_map.is_empty():
+			_client_build_map(Net.pending_map)
+		return
 	var radius := _get_range_from_rand(1.0) / 4.0 + float(Settings.planet_count) * 0.25
 	var e := environment
 	var dictionary = _generate_map_new(e.min_x, e.max_x, e.min_y, e.max_y, e.min_z, e.max_z, radius, e.number_of_players)
@@ -139,17 +177,29 @@ func start_game(p_level, p_rig: PlayerRig) -> void:
 	if dictionary == null:
 		push_error("Map generation went infinite")
 		return
+	if net_role == Net.Role.HOST:
+		Net.send_map({"map": dictionary, "colors": e.player_colors})
+		Net.command_received.connect(_host_on_command)
 	_spawn_planets(dictionary)
 	_populate_adjacency_matrix()
-	var p1: Vector3 = dictionary["Player1"][0][0]
-	var rp := rig.rig_position()
-	rig.set_rig_position(Vector3(p1.x, rp.y, -p1.z))
+	_place_rig_at_home(dictionary)
 	_update_ship_limits()
 	for planet in planets:
 		_spawn_ship(planet.player, planet)
 		_spawn_ship(planet.player, planet)
 		planet.spawn_timer = _spawn_wait(planet)
 	_last_fixed_time = GameTime.time
+	map_ready.emit()
+
+
+func _place_rig_at_home(dictionary: Dictionary) -> void:
+	var p1: Vector3 = dictionary[local_player][0][0]
+	var rp := rig.rig_position()
+	rig.set_rig_position(Vector3(p1.x, rp.y, -p1.z))
+
+
+func local_color() -> Color:
+	return environment.player_colors[local_player]
 
 
 func _spawn_wait(planet: Planet) -> float:
@@ -159,6 +209,11 @@ func _spawn_wait(planet: Planet) -> float:
 # ------------------------------------------------------------------ per frame
 
 func _process(delta: float) -> void:
+	if net_role == Net.Role.CLIENT:
+		_client_process()
+		return
+	if net_role == Net.Role.HOST:
+		_host_send_snapshot()
 	if GameTime.paused():
 		_render_ships()
 		return
@@ -193,9 +248,12 @@ func _update() -> void:
 					planet2.node.enable_countdown()
 			else:
 				planet2.node.disable_countdown()
-		var num3 := _check_end_scenario()
-		if num3 > 0:
-			_end_game(num3 == 1)
+		if net_role == Net.Role.HOST:
+			_check_end_versus()
+		else:
+			var num3 := _check_end_scenario()
+			if num3 > 0:
+				_end_game(num3 == 1)
 		_update_mini_map()
 	if _planets_to_change.size() > 0:
 		var planet: Planet = _planets_to_change.pop_front()
@@ -402,6 +460,8 @@ func destroy_ship(s: Ship) -> void:
 # ------------------------------------------------------------------ public API (MasterController)
 
 func change_planet_hands_queued(planet: Planet) -> void:
+	if net_role == Net.Role.CLIENT:
+		return # the host decides; the new owner arrives in a snapshot
 	_planets_to_change.append(planet)
 
 
@@ -474,6 +534,14 @@ func add_to_ship_counter(n: int) -> void:
 	Stats.add_to_counter("ShipKills", n)
 
 
+## A ship of `victim` was destroyed, last hit by `killer`.
+func count_kill(victim: String, killer: String) -> void:
+	if victim != local_player and killer == local_player:
+		add_to_ship_counter(1)
+	elif net_role == Net.Role.HOST and victim != "Player2" and killer == "Player2":
+		_remote_kills += 1
+
+
 func get_planets_in_range(planet: Planet) -> Array:
 	return adjacency[planet].duplicate()
 
@@ -529,12 +597,14 @@ func _apply_game_settings() -> void:
 				e.player_colors[key] = Color(0, 1, 1, 1)
 				break
 		e.player_colors["Player1"] = Settings.player_color
+		if net_role == Net.Role.HOST:
+			_assign_remote_color(Net.remote_color)
 		e.ai_diff = Settings.ai_diff
 		if Settings.ai_diff == 0:
 			e.update_ai_this_often = 15.0
 			e.ai_attack_threshold = 0.8
 			for k in e.player_spawn_rates.keys():
-				if k != "neutral" and k != "Player1":
+				if k != "neutral" and not human_players.has(k):
 					e.player_spawn_rates[k] *= 1.5
 		elif Settings.ai_diff == 1:
 			e.update_ai_this_often = 12.0
@@ -546,7 +616,7 @@ func _apply_game_settings() -> void:
 			e.update_ai_this_often = 1.0
 			e.ai_attack_threshold = 1.2
 			for k in e.player_spawn_rates.keys():
-				if k != "neutral" and k != "Player1":
+				if k != "neutral" and not human_players.has(k):
 					e.player_spawn_rates[k] *= 0.5
 		var num := Settings.planet_count * 2
 		if Settings.number_of_players == 8:
@@ -559,8 +629,20 @@ func _apply_game_settings() -> void:
 		e.max_z = Settings.max_z * 2.0 * float(num + 3)
 		e.max_y += num
 	if level:
-		level.set_player_color_disc(Settings.player_color)
+		level.set_player_color_disc(local_color())
 	e.initialized = true
+
+
+## Versus: Player2 gets the joining player's colour, unless the host already uses it.
+func _assign_remote_color(want: Color) -> void:
+	var cols := environment.player_colors
+	if U.color_eq(want, cols["Player1"]) or U.color_eq(want, cols["Player2"]):
+		return
+	for key in cols.keys():
+		if key != "Player1" and key != "Player2" and U.color_eq(cols[key], want):
+			cols[key] = cols["Player2"]
+			break
+	cols["Player2"] = want
 
 
 # ------------------------------------------------------------------ map generation
@@ -832,7 +914,10 @@ func _end_game(winner: bool) -> void:
 		_audio.volume_db = linear_to_db(VOLUME)
 		_audio.play()
 		_game_over = true
-		if winner:
+		if winner and net_role != Net.Role.OFFLINE:
+			Stats.add_to_counter("VersusWins", 1)
+			Stats.flush()
+		elif winner:
 			var n := environment.number_of_players - 1
 			match environment.ai_diff:
 				0: Stats.add_to_counter("EasyWins", n)
@@ -860,3 +945,400 @@ func _get_planets_in_range_base(to_check: Planet) -> Array:
 		if to_check != planet and to_check.node.global_position.distance_to(planet.node.global_position) < to_check.node.planet_range:
 			lst.append(planet)
 	return lst
+
+
+# ------------------------------------------------------------------ player commands
+# The ClickHandler goes through these so a versus client can forward them to the host.
+
+## Send ships from `source` to `dest` (and optionally link them), as ClickHandler.Select did.
+func command_send(source: Planet, dest: Planet, percent: float, link: bool) -> void:
+	if net_role != Net.Role.CLIENT:
+		_apply_send(source, dest, percent, link, local_player)
+		return
+	_cmd_seq += 1
+	# predict the link changes so hover/drag visuals are right before the host confirms
+	if get_planet_assignment(dest) == source:
+		planet_links.erase(dest)
+		_pending_links[dest] = _cmd_seq
+	planet_links.erase(source)
+	if link:
+		planet_links[source] = dest
+	_pending_links[source] = _cmd_seq
+	Net.send_command([_cmd_seq, "send", source.id, dest.id, percent, link])
+
+
+func command_unlink(source: Planet) -> void:
+	if net_role != Net.Role.CLIENT:
+		delete_link(source)
+		return
+	_cmd_seq += 1
+	planet_links.erase(source)
+	_pending_links[source] = _cmd_seq
+	Net.send_command([_cmd_seq, "unlink", source.id])
+
+
+func command_pause() -> void:
+	if net_role == Net.Role.CLIENT:
+		_cmd_seq += 1
+		Net.send_command([_cmd_seq, "pause"])
+	else:
+		GameTime.time_scale = 1.0 if GameTime.paused() else 0.0
+
+
+func _apply_send(source: Planet, dest: Planet, percent: float, link: bool, by: String) -> void:
+	if source.player != by or source == dest:
+		return
+	if source.node.planet_range < source.node.global_position.distance_to(dest.node.global_position):
+		return
+	if get_planet_assignment(dest) == source:
+		delete_link(dest)
+	send_wave(source, dest, percent)
+	delete_link(source)
+	if link:
+		establish_link(source, dest)
+
+
+func _planet_by_id(id: Variant) -> Planet:
+	var i := int(id)
+	if i < 0 or i >= planets.size():
+		return null
+	return planets[i]
+
+
+# ------------------------------------------------------------------ versus: host
+
+func _host_on_command(cmd: Array) -> void:
+	if cmd.size() < 2:
+		return
+	_remote_ack = maxi(_remote_ack, int(cmd[0]))
+	match str(cmd[1]):
+		"send":
+			if cmd.size() < 6:
+				return
+			var src := _planet_by_id(cmd[2])
+			var dst := _planet_by_id(cmd[3])
+			if src and dst:
+				_apply_send(src, dst, clampf(float(cmd[4]), 0.25, 1.0), bool(cmd[5]), "Player2")
+		"unlink":
+			var src := _planet_by_id(cmd[2]) if cmd.size() > 2 else null
+			if src and src.player == "Player2":
+				delete_link(src)
+		"pause":
+			if not _game_over:
+				command_pause()
+
+
+## The opponent disconnected: an A.I. takes over Player2.
+func on_remote_left() -> void:
+	if net_role != Net.Role.HOST:
+		return
+	ais[0].is_ai_enabled = true
+
+
+func _host_send_snapshot() -> void:
+	_snap_timer -= GameTime.unscaled_delta
+	if _snap_timer > 0.0 or Net.remote_id == 0:
+		return
+	_snap_timer += 1.0 / Net.SNAPSHOT_RATE
+	if _snap_timer < 0.0:
+		_snap_timer = 0.0
+	Net.send_snapshot(_build_snapshot())
+
+
+static func _qp(v: float) -> int:
+	return clampi(roundi(v * POS_SCALE), -32767, 32767)
+
+
+## Layout (little endian):
+##   u8 version, f64 host time, u8 flags (1 = paused), u32 command ack, u32 Player2 kills,
+##   9 x (u16 ship count, u16 ship limit),
+##   u16 planets, per planet: u8 owner, u8 flags (1 = countdown), s16 link target (-1 none),
+##   u32 ships, per ship: u32 id, u8 owner, u8 flags (1 = fired), u16 planet, 3 x s16 position
+##                        [+ 3 x s16 laser target when fired]
+func _build_snapshot() -> PackedByteArray:
+	var fired := 0
+	for s in ships:
+		if s.net_fired:
+			fired += 1
+	var names: Array = environment.player_names
+	var b := PackedByteArray()
+	b.resize(18 + names.size() * 4 + 2 + planets.size() * 4 + 4 + ships.size() * 14 + fired * 6)
+	b.encode_u8(0, 1)
+	b.encode_double(1, Time.get_ticks_usec() / 1000000.0)
+	b.encode_u8(9, 1 if GameTime.paused() else 0)
+	b.encode_u32(10, _remote_ack)
+	b.encode_u32(14, _remote_kills)
+	var o := 18
+	for n in names:
+		b.encode_u16(o, clampi(ship_counts.get(n, 0), 0, 65535))
+		b.encode_u16(o + 2, clampi(ship_limits.get(n, 0), 0, 65535))
+		o += 4
+	b.encode_u16(o, planets.size())
+	o += 2
+	for p in planets:
+		b.encode_u8(o, _player_index[p.player])
+		b.encode_u8(o + 1, 1 if p.node._countdown_enabled else 0)
+		var l = planet_links.get(p)
+		b.encode_s16(o + 2, l.id if l != null else -1)
+		o += 4
+	b.encode_u32(o, ships.size())
+	o += 4
+	for s in ships:
+		b.encode_u32(o, s.id)
+		b.encode_u8(o + 4, _player_index[s.player_name])
+		b.encode_u8(o + 5, 1 if s.net_fired else 0)
+		b.encode_u16(o + 6, s.planet.id)
+		var v: Vector3 = s.pos
+		b.encode_s16(o + 8, _qp(v.x))
+		b.encode_s16(o + 10, _qp(v.y))
+		b.encode_s16(o + 12, _qp(v.z))
+		o += 14
+		if s.net_fired:
+			s.net_fired = false
+			b.encode_s16(o, _qp(s.laser_to.x))
+			b.encode_s16(o + 2, _qp(s.laser_to.y))
+			b.encode_s16(o + 4, _qp(s.laser_to.z))
+			o += 6
+	return b
+
+
+## End of game with two humans (and possibly A.I.s): same rules as _check_end_scenario,
+## evaluated for each human player.
+func _check_end_versus() -> void:
+	var owned := {}
+	for planet in planets:
+		owned[planet.player] = owned.get(planet.player, 0) + 1
+	for h in human_players:
+		if owned.get(h, 0) == 0:
+			continue
+		var others_alive := false
+		for k in owned.keys():
+			if k != h and k != "neutral":
+				others_alive = true
+		for k in ship_counts.keys():
+			if k != h and k != "neutral" and ship_counts[k] > 3:
+				others_alive = true
+		if not others_alive:
+			_end_game(h == "Player1")
+			_send_remote_result(h == "Player2")
+			return
+	if owned.get("Player1", 0) == 0 and ship_counts["Player1"] < 1:
+		_end_game(false)
+	if owned.get("Player2", 0) == 0 and ship_counts["Player2"] < 1:
+		_send_remote_result(false)
+
+
+func _send_remote_result(won: bool) -> void:
+	var r := 1 if won else 0
+	if _remote_result == r:
+		return
+	_remote_result = r
+	Net.send_game_over(won)
+
+
+# ------------------------------------------------------------------ versus: client
+
+func _client_build_map(data: Dictionary) -> void:
+	if not planets.is_empty():
+		return
+	var cols: Dictionary = data.get("colors", {})
+	for k in cols.keys():
+		environment.player_colors[k] = cols[k]
+	var dictionary: Dictionary = data["map"]
+	_spawn_planets(dictionary)
+	_populate_adjacency_matrix()
+	_place_rig_at_home(dictionary)
+	if level:
+		level.set_player_color_disc(local_color())
+	map_ready.emit()
+
+
+func _client_on_snapshot(data: PackedByteArray) -> void:
+	if planets.is_empty():
+		return
+	var snap := _parse_snapshot(data)
+	if snap.is_empty():
+		return
+	GameTime.time_scale = 0.0 if snap["paused"] else 1.0
+	for p in _pending_links.keys():
+		if _pending_links[p] <= snap["ack"]:
+			_pending_links.erase(p)
+	var kills: int = snap["kills"]
+	if kills > _kills_seen:
+		add_to_ship_counter(kills - _kills_seen)
+		_kills_seen = kills
+	_latest_t = snap["t"]
+	if _render_time < 0.0:
+		_render_time = _latest_t - INTERP_DELAY
+	_snaps.append(snap)
+	if _snaps.size() > 20:
+		_client_apply(_snaps.pop_front())
+
+
+func _parse_snapshot(b: PackedByteArray) -> Dictionary:
+	var names: Array = environment.player_names
+	if b.size() < 18 + names.size() * 4 + 6 or b.decode_u8(0) != 1:
+		return {}
+	var snap := {
+		"t": b.decode_double(1),
+		"paused": b.decode_u8(9) == 1,
+		"ack": b.decode_u32(10),
+		"kills": b.decode_u32(14),
+	}
+	var o := 18
+	var counts := {}
+	var limits := {}
+	for n in names:
+		counts[n] = b.decode_u16(o)
+		limits[n] = b.decode_u16(o + 2)
+		o += 4
+	snap["counts"] = counts
+	snap["limits"] = limits
+	var np := b.decode_u16(o)
+	o += 2
+	if np != planets.size() or b.size() < o + np * 4 + 4:
+		return {}
+	snap["planets"] = b.slice(o, o + np * 4)
+	o += np * 4
+	var ns := b.decode_u32(o)
+	o += 4
+	var recs := []
+	var pos := {}
+	for i in ns:
+		if b.size() < o + 14:
+			return {}
+		var id := b.decode_u32(o)
+		var fired := b.decode_u8(o + 5) & 1
+		var v := Vector3(b.decode_s16(o + 8), b.decode_s16(o + 10), b.decode_s16(o + 12)) / POS_SCALE
+		var rec := [id, b.decode_u8(o + 4), fired, b.decode_u16(o + 6), v, Vector3.ZERO]
+		o += 14
+		if fired:
+			if b.size() < o + 6:
+				return {}
+			rec[5] = Vector3(b.decode_s16(o), b.decode_s16(o + 2), b.decode_s16(o + 4)) / POS_SCALE
+			o += 6
+		recs.append(rec)
+		pos[id] = v
+	snap["ships"] = recs
+	snap["pos"] = pos
+	return snap
+
+
+func _client_process() -> void:
+	if _render_time >= 0.0:
+		_render_time += GameTime.unscaled_delta
+		var target := _latest_t - INTERP_DELAY
+		if absf(_render_time - target) > 0.5:
+			_render_time = target
+		else:
+			_render_time += (target - _render_time) * 0.05
+		while not _snaps.is_empty() and _snaps[0]["t"] <= _render_time:
+			_client_apply(_snaps.pop_front())
+		var nxt: Dictionary = _snaps[0] if not _snaps.is_empty() else {}
+		var alpha := 0.0
+		if not nxt.is_empty() and nxt["t"] > _cur_snap_t:
+			alpha = clampf((_render_time - _cur_snap_t) / (nxt["t"] - _cur_snap_t), 0.0, 1.0)
+		var npos: Dictionary = nxt.get("pos", {})
+		for s in ships:
+			if npos.has(s.id):
+				var to: Vector3 = npos[s.id]
+				s.pos = s.net_from.lerp(to, alpha)
+				var dir: Vector3 = to - s.net_from
+				if dir.length_squared() > 1e-8:
+					s.basis = U.look_basis(s.pos, s.pos + dir, Vector3.UP, s.basis)
+			else:
+				s.pos = s.net_from
+			s.laser_from = s.pos
+	if GameTime.crossed(45):
+		_update_mini_map()
+	_render_ships()
+
+
+func _client_apply(snap: Dictionary) -> void:
+	_cur_snap_t = snap["t"]
+	var names: Array = environment.player_names
+	ship_counts = snap["counts"]
+	ship_limits = snap["limits"]
+	# planets: owner, countdown, links
+	var pb: PackedByteArray = snap["planets"]
+	for i in planets.size():
+		var p: Planet = planets[i]
+		var owner: String = names[mini(pb.decode_u8(i * 4), names.size() - 1)]
+		if p.player != owner:
+			_client_change_hands(p, owner)
+		var cd := (pb.decode_u8(i * 4 + 1) & 1) == 1
+		if cd != p.net_countdown:
+			p.net_countdown = cd
+			if cd:
+				p.node.enable_countdown(true)
+			else:
+				p.node.disable_countdown()
+	for i in planets.size():
+		var p: Planet = planets[i]
+		if _pending_links.has(p):
+			continue
+		var t := pb.decode_s16(i * 4 + 2)
+		var want: Planet = _planet_by_id(t) if t >= 0 else null
+		if planet_links.get(p) == want:
+			continue
+		if want == null:
+			planet_links.erase(p)
+			p.node.erase_link()
+		else:
+			planet_links[p] = want
+			if p.player == local_player:
+				p.node.draw_link_to_planet(want)
+	# ships
+	var seen := {}
+	for rec in snap["ships"]:
+		var id: int = rec[0]
+		seen[id] = true
+		var planet := _planet_by_id(rec[3])
+		if planet == null:
+			continue
+		var s: Ship = _client_ships.get(id)
+		if s == null:
+			var pl: String = names[mini(rec[1], names.size() - 1)]
+			s = Ship.new(self, planet, pl)
+			s.id = id
+			s.player_name = pl
+			s.color = environment.player_colors[pl]
+			s.impact_index = explosion_index(s.color)
+			s.pos = rec[4]
+			_client_ships[id] = s
+			ships.append(s)
+		s.net_from = rec[4]
+		s.planet = planet
+		s.current_planet = planet
+		s.laser_enabled = rec[2] == 1
+		if s.laser_enabled:
+			s.laser_to = rec[5]
+			planet.node.play_laser_sound()
+	for id in _client_ships.keys():
+		if seen.has(id):
+			continue
+		var s: Ship = _client_ships[id]
+		_client_ships.erase(id)
+		spawn_explosion(s.impact_index, s.pos)
+		s.planet.node.play_explode_sound()
+		s.dead = true
+		ships.erase(s)
+	# Planet.ships / enemy_ships (used for the countdown sounds)
+	for p in planets:
+		p.ships.clear()
+		p.enemy_ships.clear()
+	for s in ships:
+		if s.player_name == s.planet.player:
+			s.planet.ships.append(s)
+		else:
+			s.planet.enemy_ships.append(s)
+
+
+func _client_change_hands(planet: Planet, owner: String) -> void:
+	if player["selected_planet"] == planet:
+		planet.node.deselect()
+	planet.player = owner
+	planet.node.change_color(environment.player_colors[owner])
+	for src in planet_links.keys():
+		if planet_links[src] == planet and src.player == owner and src.player == local_player:
+			src.node.change_link_color()

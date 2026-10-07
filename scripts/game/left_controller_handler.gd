@@ -111,7 +111,7 @@ func _process(_delta: float) -> void:
 		for t in tool_tips:
 			t[1].width = 0.001 * x
 		menu_tip[1].width = 0.001 * x
-	if _first:
+	if _first and not master.planets.is_empty(): # a versus client waits for the map
 		_init_mini_map()
 		_first = false
 	if _last_updated_time + TIME_BETWEEN_UPDATES < GameTime.realtime():
@@ -176,8 +176,8 @@ func _process(_delta: float) -> void:
 
 
 func _update_ship_count_text() -> void:
-	var count := master.get_player_ship_count("Player1")
-	var num := master.get_player_ship_limit("Player1") + 1
+	var count := master.get_player_ship_count(master.local_player)
+	var num := master.get_player_ship_limit(master.local_player) + 1
 	ship_count_text.text = "%d/%d" % [count, num]
 	ship_count_text.modulate = Color.RED if count > num else Color.WHITE
 

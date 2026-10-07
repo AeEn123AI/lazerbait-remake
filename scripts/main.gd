@@ -22,6 +22,11 @@ func _ready() -> void:
 		start = "game"
 		_apply_quick_start_settings()
 	_load(start)
+	for a in args:
+		if a == "--host":
+			Net.host()
+		elif a.begins_with("--join="):
+			Net.join(a.substr(7))
 	rig.set_fade_immediate(1.0)
 	rig.fade_to(0.0, 0.5)
 

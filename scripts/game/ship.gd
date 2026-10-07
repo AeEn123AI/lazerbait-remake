@@ -69,6 +69,10 @@ var overlap_planets := {}        # Planet -> true
 var cell := Vector3i.ZERO
 var id := 0
 
+# --- versus mode (Net) ---
+var net_fired := false           # host: fired since the last snapshot
+var net_from := Vector3.ZERO     # client: position in the last applied snapshot
+
 
 func _id_lt(o: Ship) -> bool:
 	return id < o.id
@@ -238,8 +242,7 @@ func _check_health_and_die() -> void:
 		master.decrement_ship_count(player_name)
 		laser_enabled = false
 		is_initialized = false
-		if player != "Player1" and last_taken_damage_from == "Player1":
-			master.add_to_ship_counter(1)
+		master.count_kill(player, last_taken_damage_from)
 		master.destroy_ship(self)
 
 
@@ -281,5 +284,6 @@ func _shoot(now: float) -> void:
 		laser_enabled = true
 		laser_from = pos
 		laser_to = target.pos
+		net_fired = true
 		current_planet.node.play_laser_sound()
 		target.take_damage(DAMAGE_PER_BULLET, player)

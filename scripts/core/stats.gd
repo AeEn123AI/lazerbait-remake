@@ -6,16 +6,17 @@ extends Node
 const STATS_PATH := "user://lazerbait-stats.json"
 
 # Same keys and insertion order as steamCounters.baseCounters
-const KEYS := ["ShipKills", "EasyWins", "MediumWins", "HardWins", "CheatingWins"]
+const KEYS := ["ShipKills", "EasyWins", "MediumWins", "HardWins", "CheatingWins", "VersusWins"]
 const DISPLAY_NAMES := {
 	"ShipKills": "Ships Destroyed",
 	"EasyWins": "Easy AIs Defeated",
 	"MediumWins": "Medium AIs Defeated",
 	"HardWins": "Hard AIs Defeated",
 	"CheatingWins": "Cheating AIs Defeated",
+	"VersusWins": "Versus Wins", # remake addition (networked versus mode)
 }
 
-var base_counters := {"ShipKills": 0, "EasyWins": 0, "MediumWins": 0, "HardWins": 0, "CheatingWins": 0}
+var base_counters := {"ShipKills": 0, "EasyWins": 0, "MediumWins": 0, "HardWins": 0, "CheatingWins": 0, "VersusWins": 0}
 var _updates: Array = []
 var _dirty := false
 var _save_timer := 0.0

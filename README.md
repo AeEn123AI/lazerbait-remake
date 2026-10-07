@@ -129,10 +129,36 @@ room shows through, and the platform and planets stay visible.
   project settings.
 * If the device can't do passthrough, the menu shows "Passthrough = On (unsupported)" and the game stays opaque.
 
+## Versus mode (networked multiplayer)
+A remake addition: two people play against each other over the network, each on their own machine, in VR or on
+desktop, in any combination (for example a Quest against a PC).
+
+* **Host**: in the main menu, turn to the **"Versus (network)"** panel behind you on the left and click
+  **Host a Game**. The status line shows your address. The host's menu settings (ships, speed, players, A.I., map
+  size) are used for the match.
+* **Join**: click **Find Games**. Games on the same network appear within a second or two. Click **Join ...** (and
+  **Next Game** if there are several). On desktop you can also press **J** and type an address.
+* The match starts as soon as the second player joins. The host plays Player1 and the joining player plays Player2.
+  Each player keeps their chosen colour; if both chose the same one, the joining player gets a different colour.
+  With 4 or 8 players selected, the extra players are A.I.s.
+* Either player can pause. Quitting to the menu ends the session. If the joining player leaves, an A.I. takes
+  over their side. If the host leaves, the joining player can return to the menu.
+* Wins are counted in a new "Versus Wins" stat.
+
+Command line (after `--`): `--host` starts hosting, `--join=ADDRESS[:PORT]` joins a game.
+
+Networking details: ENet over UDP port **7777**. LAN discovery uses UDP 7778 (queries) and 7779 (beacons), so allow
+these through your firewall. The host runs the whole simulation (`scripts/game/master_controller.gd`). About 20
+times a second it sends the client a compact snapshot: planet owners, countdowns, links, ship counts, and each
+ship's position as int16 values (roughly 14 bytes per ship). The client interpolates the snapshots about 0.12 s
+behind and sends its commands (send ships / link / unlink / pause) back to the host, which applies them like a local
+click. Discovery only finds games on the local network. To play over the internet, forward UDP 7777 on the host's
+router and join by address. The Meta Quest preset requests the `INTERNET` permission for this.
+
 ## Project layout
 ```
 scenes/main.tscn            entry point (scripts/main.gd: level switching, fades, quality)
-scripts/core/               autoloads (Settings, Stats, GameTime, XRManager, Debug) + helpers (U, A, UI3D, Picker)
+scripts/core/               autoloads (Settings, Stats, GameTime, XRManager, Net, Debug) + helpers (U, A, UI3D, Picker)
 scripts/rig/                PlayerRig (XR origin or desktop camera), Hand (input abstraction), LaserPointer
 scripts/menu/menu_level.gd  startMenu: MenuMaster + MenuClickHandler + MovieTexturePlayer
 scripts/game/               MasterController, Ship, Planet, PlanetController, AIController, ClickHandler,

@@ -179,7 +179,7 @@ func _process(_delta: float) -> void:
 	if not _countdown_enabled or not (_last_countdown + COUNTDOWN_INTERVAL < now):
 		return
 	_last_countdown = now
-	var flag: bool = parent.enemy_ships.any(func(s): return s.player == "Player1") or parent.player == "Player1"
+	var flag: bool = parent.enemy_ships.any(func(s): return s.player == parent.master.local_player) or parent.player == parent.master.local_player
 	_countdown_dots -= 1
 	if _countdown_dots <= 0:
 		dot1.visible = false
@@ -271,7 +271,7 @@ func on_pointer_enter(menu: bool) -> void:
 		else:
 			line.set_texture(line_textures[0])
 		_set_line_scale(line, position.distance_to(global_position) * LINE_DENSITY)
-	if not menu and parent and parent.master.player.selected_planet == null and parent.player == "Player1" and parent.master.get_planet_assignment(parent) != parent:
+	if not menu and parent and parent.master.player.selected_planet == null and parent.player == parent.master.local_player and parent.master.get_planet_assignment(parent) != parent:
 		link_line.set_texture(line_textures[3])
 
 
@@ -281,7 +281,7 @@ func on_pointer_exit(menu := true) -> void:
 	set_mat_color(mat_color / COLOR_MULTIPLIER)
 	if line:
 		line.set_points(global_position, global_position)
-	if parent != null and not menu and parent.master.player.selected_planet == null and parent.player == "Player1" and parent.master.get_planet_assignment(parent) != parent:
+	if parent != null and not menu and parent.master.player.selected_planet == null and parent.player == parent.master.local_player and parent.master.get_planet_assignment(parent) != parent:
 		if parent.master.get_planet_assignment(parent).player == parent.player:
 			link_line.set_texture(line_textures[1])
 		else:
@@ -296,9 +296,10 @@ func play_explode_sound() -> void:
 	_play_explode_sound = true
 
 
-func enable_countdown() -> void:
-	if not _countdown_enabled and _last_countdown + COUNTDOWN_INTERVAL < GameTime.realtime():
-		if parent.enemy_ships.any(func(s): return s.player == "Player1"):
+## `force`: a versus client mirrors the host's countdown and skips the re-trigger guard.
+func enable_countdown(force := false) -> void:
+	if not _countdown_enabled and (force or _last_countdown + COUNTDOWN_INTERVAL < GameTime.realtime()):
+		if parent.enemy_ships.any(func(s): return s.player == parent.master.local_player):
 			_play_one_shot(A.sfx("click_electronic_05"), DOT_VOLUME, audio.pitch_scale)
 		_countdown_enabled = true
 		_last_countdown = GameTime.realtime()
