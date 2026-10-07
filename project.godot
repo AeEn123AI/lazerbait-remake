@@ -57,4 +57,5 @@ openxr/startup_alert=false
 shaders/enabled=true
 openxr/extensions/render_model=true
 openxr/extensions/meta/passthrough=true
+openxr/extensions/meta/render_model=true
 openxr/extensions/htc/passthrough=true

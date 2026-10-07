@@ -148,8 +148,12 @@ addons/                     created by tools/setup.py (OpenXR Vendors plugin)
 * **Steam stats / leaderboards**: Steamworks isn't available. The same counters (ships destroyed, AIs defeated per
   difficulty) are stored locally in `user://lazerbait-stats.json`, and the leaderboards show your local entry.
 * **Arial** (built into Unity) is replaced by the metric-compatible Liberation Sans.
-* **Controller models** come from the OpenXR runtime (render models extension), or a simple stand-in is used.
-  Controller-mounted UI uses the original Vive offsets relative to the OpenXR aim pose. The original's Oculus-specific
+* **Controller models** come from the runtime, so they match the controllers you are holding. On Meta Quest
+  (2 / 3 / Pro) Meta's own meshes are used via `XR_FB_render_model` (vendors plugin,
+  `xr/openxr/extensions/meta/render_model`; the Meta Quest preset requests the render-model permission). On other
+  runtimes (SteamVR etc.) `XR_EXT_render_model` is used. If neither is available, a procedural stand-in shaped like
+  the active controller type (Touch-style or Vive wand) is shown. Models sit on the OpenXR grip pose. The
+  controller-mounted UI uses the original Vive offsets relative to the aim pose. The original's Oculus-specific
   offsets for SteamVR's legacy poses don't map onto OpenXR, so they aren't used.
 * **Mini-map orientation**: the original oriented the mini-map using world axes at the moment the match started
   (so it depended on how you held the controller). Here it's built as if the controller was held level.

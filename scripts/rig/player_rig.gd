@@ -20,6 +20,7 @@ var left: Hand
 var right: Hand
 var content: Node3D                # children of the Unity [CameraRig]
 var _scale := 1.0
+var _controller_models: Array = [] # VR controller models (grip pose)
 
 # desktop camera state
 var yaw := 0.0
@@ -83,19 +84,19 @@ func _build_vr() -> void:
 
 
 func _add_controller_model(h: Hand, is_left: bool) -> void:
-	# SteamVR_RenderModel equivalent: the runtime's own controller model when available.
-	var holder := Node3D.new()
-	holder.name = "Model"
-	h.ui.add_child(holder)
-	var fallback := _fallback_controller_mesh()
-	holder.add_child(fallback)
-	if ClassDB.class_exists("OpenXRRenderModelManager"):
-		var mgr: Node3D = ClassDB.instantiate("OpenXRRenderModelManager")
-		mgr.set("tracker", 2 if is_left else 3) # RENDER_MODEL_TRACKER_LEFT_HAND / RIGHT_HAND
-		mgr.set("make_local_to_pose", "aim")
-		holder.add_child(mgr)
-		# hide the stand-in model once the runtime supplied a real one
-		mgr.child_entered_tree.connect(func(_n): fallback.visible = false)
+	# SteamVR_RenderModel equivalent. Render models are defined relative to the *grip* pose,
+	# while the game's controller UI follows the aim pose, so the model gets its own
+	# grip-pose controller. Its scale follows the world scale like the [CameraRig] children did.
+	var grip := XRController3D.new()
+	grip.name = ("Left" if is_left else "Right") + "GripController"
+	grip.tracker = &"left_hand" if is_left else &"right_hand"
+	grip.pose = &"grip"
+	origin.add_child(grip)
+	var model := ControllerModel.new()
+	model.name = "Model"
+	grip.add_child(model)
+	model.setup(is_left)
+	_controller_models.append(model)
 
 
 func _fallback_controller_mesh() -> Node3D:
@@ -229,6 +230,8 @@ func set_scale_factor(s: float) -> void:
 	_scale = s
 	if vr:
 		(origin as XROrigin3D).world_scale = s
+		for m in _controller_models:
+			m.scale = Vector3.ONE * s
 		head.near = 0.05 * s
 	else:
 		head.position = Vector3(0, EYE_HEIGHT * s, 0)
