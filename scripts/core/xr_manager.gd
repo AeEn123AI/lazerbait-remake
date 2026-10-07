@@ -32,6 +32,8 @@ func _ready() -> void:
 			xr_interface.connect("session_begun", _on_session_begun)
 		if xr_interface.has_signal("session_stopping"):
 			xr_interface.connect("session_stopping", func(): _session_running = false)
+		if xr_interface.has_signal("pose_recentered"):
+			xr_interface.connect("pose_recentered", _on_pose_recentered)
 		print("[Lazerbait] VR mode (OpenXR)")
 	else:
 		if xr_interface and xr_interface.is_initialized():
@@ -45,6 +47,14 @@ func _ready() -> void:
 			print("[Lazerbait] Desktop mode (Android: set export preset XR Mode to OpenXR for VR)")
 		else:
 			print("[Lazerbait] Desktop mode")
+
+
+## The user recentered from the system (e.g. holding the Meta button on Quest).
+## With the Stage reference space the runtime doesn't move the play space itself, so we
+## re-centre on the headset: horizontal position and facing only, keeping the real floor height.
+func _on_pose_recentered() -> void:
+	XRServer.center_on_hmd(XRServer.RESET_BUT_KEEP_TILT, true)
+	print("[Lazerbait] recentered on headset")
 
 
 func _on_session_begun() -> void:
