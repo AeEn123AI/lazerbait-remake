@@ -71,8 +71,18 @@ Open the folder in the Godot 4.6 editor and press Play, or run `godot --path .`.
    ```
    The `build/` folder must exist first. Keep the `.pck` and the `libgodotopenxrvendors` library next to the
    executable.
-3. Standalone Meta Quest (optional): install the Android export templates and SDK, add an Android preset with
-   XR Mode = OpenXR, and enable the vendors plugin's Meta options. Use the Mobile renderer.
+3. Standalone Meta Quest (optional): install the Android export templates and SDK. A ready-made **Meta Quest**
+   preset is included (`xr_features/xr_mode=1`, the vendors plugin's Meta options enabled, arm64 only). Export it with:
+   ```sh
+   godot --headless --path . --export-release "Meta Quest" build/android/Lazerbait.apk
+   ```
+   The first Android export also needs the Gradle build template (Project → Install Android Build Template), which
+   pulls in the Khronos OpenXR loader. The OpenXR loader is bundled by Gradle; no extra step. Use the Mobile renderer
+   (already set via `rendering/renderer/rendering_method.mobile`).
+
+   **Important:** the preset's Android "XR Mode" option must be **OpenXR**. If it is "Regular", the APK launches as a
+   flat window and `[Lazerbait] Desktop mode` is printed. The included preset selects OpenXR; if you make your own
+   preset, set XR Mode accordingly and enable the vendors plugin's Meta options.
 
 Exported builds contain the extracted assets, so **don't redistribute them**. Only the source is meant to be
 shared.

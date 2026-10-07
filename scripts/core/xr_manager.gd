@@ -37,7 +37,14 @@ func _ready() -> void:
 		if xr_interface and xr_interface.is_initialized():
 			xr_interface.uninitialize()
 		vr = false
-		print("[Lazerbait] Desktop mode")
+		if OS.has_feature("android") and not force_desktop:
+			# On Android a standalone headset only runs in VR when the export preset's
+			# "XR Mode" is "OpenXR". If the OpenXR interface is missing here, the build was
+			# exported with XR Mode = Regular (or without the OpenXR loader), so Godot runs flat.
+			push_warning("OpenXR interface unavailable on Android; exporting with XR Mode = OpenXR is required for VR.")
+			print("[Lazerbait] Desktop mode (Android: set export preset XR Mode to OpenXR for VR)")
+		else:
+			print("[Lazerbait] Desktop mode")
 
 
 func _on_session_begun() -> void:
