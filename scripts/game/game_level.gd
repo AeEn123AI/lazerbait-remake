@@ -52,6 +52,7 @@ func setup(p_main, p_rig: PlayerRig) -> void:
 	master.map_ready.connect(_on_map_ready)
 	if Net.versus():
 		Net.remote_left.connect(_on_remote_left)
+		Net.notice.connect(_on_notice)
 		if Net.is_client():
 			show_net_message("Waiting for the host...")
 	master.start_game(self, rig)
@@ -282,12 +283,18 @@ func show_net_message(msg: String) -> void:
 		rig.set_help_text(msg if msg != "" else _desktop_help)
 
 
-## The other player disconnected (or the host left).
-func _on_remote_left() -> void:
+func _on_notice(text: String) -> void:
+	if not master._game_over:
+		show_net_message(text)
+		get_tree().create_timer(6.0).timeout.connect(func():
+			if is_instance_valid(self) and _net_texts.size() > 0 and _net_texts[0].text == text:
+				show_net_message(""))
+
+
+## A joined player disconnected (host), or the host left (client).
+func _on_remote_left(player: String) -> void:
 	if master.net_role == Net.Role.HOST:
-		master.on_remote_left()
-		if not master._game_over:
-			show_net_message("Opponent left - the A.I. takes over")
+		master.on_remote_left(player) # the message arrives through Net.notice
 	else:
 		show_net_message("Connection to the host was lost")
 		for p in _end_planets:
@@ -321,6 +328,8 @@ func _on_passthrough_changed(active: bool) -> void:
 func teardown() -> void:
 	if Net.remote_left.is_connected(_on_remote_left):
 		Net.remote_left.disconnect(_on_remote_left)
+	if Net.notice.is_connected(_on_notice):
+		Net.notice.disconnect(_on_notice)
 	if Net.role != Net.Role.OFFLINE:
 		Net.leave_match()
 	if XRManager.passthrough_changed.is_connected(_on_passthrough_changed):

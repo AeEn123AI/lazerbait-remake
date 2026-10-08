@@ -87,9 +87,9 @@ var local_player := "Player1"  # the player this machine controls
 var human_players := ["Player1"]
 var _player_index := {}        # player name -> index in environment.player_names
 var _snap_timer := 0.0
-var _remote_ack := 0           # host: last command sequence number applied
-var _remote_kills := 0         # host: enemy ships destroyed by Player2
-var _remote_result := -1       # host: result sent to the client (-1 none, 0 lost, 1 won)
+var _remote_ack := {}          # host: remote player -> last command sequence number applied
+var _remote_kills := {}        # host: remote player -> enemy ships destroyed
+var _remote_result := {}       # host: remote player -> result sent (0 lost, 1 won)
 var _client_ships := {}        # client: ship id -> Ship
 var _snaps: Array = []         # client: received, not yet applied snapshots
 var _cur_snap_t := -1.0
@@ -127,9 +127,12 @@ func start_game(p_level, p_rig: PlayerRig) -> void:
 	rig = p_rig
 	if Net.in_match:
 		net_role = Net.role
-		human_players = ["Player1", "Player2"]
 		if net_role == Net.Role.CLIENT:
-			local_player = "Player2"
+			local_player = Net.local_player
+			human_players = ["Player1", local_player]
+		else:
+			human_players = ["Player1"]
+			human_players.append_array(Net.remote_players().keys())
 	for i in environment.player_names.size():
 		_player_index[environment.player_names[i]] = i
 	_make_explosion_colors()
@@ -159,6 +162,9 @@ func start_game(p_level, p_rig: PlayerRig) -> void:
 		ais.append(ai)
 
 	_apply_game_settings()
+	for ai in ais:
+		if human_players.has(ai.player_name):
+			ai.is_ai_enabled = false
 	_populate_ship_counter()
 	if net_role == Net.Role.CLIENT:
 		Net.map_received.connect(_client_build_map)
@@ -538,8 +544,8 @@ func add_to_ship_counter(n: int) -> void:
 func count_kill(victim: String, killer: String) -> void:
 	if victim != local_player and killer == local_player:
 		add_to_ship_counter(1)
-	elif net_role == Net.Role.HOST and victim != "Player2" and killer == "Player2":
-		_remote_kills += 1
+	elif net_role == Net.Role.HOST and victim != killer and human_players.has(killer):
+		_remote_kills[killer] = _remote_kills.get(killer, 0) + 1
 
 
 func get_planets_in_range(planet: Planet) -> Array:
@@ -598,7 +604,11 @@ func _apply_game_settings() -> void:
 				break
 		e.player_colors["Player1"] = Settings.player_color
 		if net_role == Net.Role.HOST:
-			_assign_remote_color(Net.remote_color)
+			var assigned := ["Player1"]
+			var remotes := Net.remote_players()
+			for p in remotes.keys():
+				_assign_remote_color(p, remotes[p]["color"], assigned)
+				assigned.append(p)
 		e.ai_diff = Settings.ai_diff
 		if Settings.ai_diff == 0:
 			e.update_ai_this_often = 15.0
@@ -633,16 +643,20 @@ func _apply_game_settings() -> void:
 	e.initialized = true
 
 
-## Versus: Player2 gets the joining player's colour, unless the host already uses it.
-func _assign_remote_color(want: Color) -> void:
+## Versus: `player` gets the colour its human chose, unless an earlier human (`assigned`)
+## already has it; the A.I. slot owning that colour takes `player`'s old one.
+func _assign_remote_color(player: String, want: Color, assigned: Array) -> void:
 	var cols := environment.player_colors
-	if U.color_eq(want, cols["Player1"]) or U.color_eq(want, cols["Player2"]):
+	if U.color_eq(want, cols[player]):
 		return
+	for h in assigned:
+		if U.color_eq(want, cols[h]):
+			return
 	for key in cols.keys():
-		if key != "Player1" and key != "Player2" and U.color_eq(cols[key], want):
-			cols[key] = cols["Player2"]
+		if key != player and U.color_eq(cols[key], want):
+			cols[key] = cols[player]
 			break
-	cols["Player2"] = want
+	cols[player] = want
 
 
 # ------------------------------------------------------------------ map generation
@@ -1007,10 +1021,10 @@ func _planet_by_id(id: Variant) -> Planet:
 
 # ------------------------------------------------------------------ versus: host
 
-func _host_on_command(cmd: Array) -> void:
-	if cmd.size() < 2:
+func _host_on_command(by: String, cmd: Array) -> void:
+	if cmd.size() < 2 or not human_players.has(by):
 		return
-	_remote_ack = maxi(_remote_ack, int(cmd[0]))
+	_remote_ack[by] = maxi(_remote_ack.get(by, 0), int(cmd[0]))
 	match str(cmd[1]):
 		"send":
 			if cmd.size() < 6:
@@ -1018,31 +1032,38 @@ func _host_on_command(cmd: Array) -> void:
 			var src := _planet_by_id(cmd[2])
 			var dst := _planet_by_id(cmd[3])
 			if src and dst:
-				_apply_send(src, dst, clampf(float(cmd[4]), 0.25, 1.0), bool(cmd[5]), "Player2")
+				_apply_send(src, dst, clampf(float(cmd[4]), 0.25, 1.0), bool(cmd[5]), by)
 		"unlink":
 			var src := _planet_by_id(cmd[2]) if cmd.size() > 2 else null
-			if src and src.player == "Player2":
+			if src and src.player == by:
 				delete_link(src)
 		"pause":
 			if not _game_over:
 				command_pause()
 
 
-## The opponent disconnected: an A.I. takes over Player2.
-func on_remote_left() -> void:
-	if net_role != Net.Role.HOST:
+## A joined player disconnected: an A.I. takes over their side.
+func on_remote_left(player: String) -> void:
+	if net_role != Net.Role.HOST or not player.begins_with("Player"):
 		return
-	ais[0].is_ai_enabled = true
+	var idx := int(player.substr(6))
+	if idx >= 2:
+		ais[idx - 2].is_ai_enabled = true
 
 
 func _host_send_snapshot() -> void:
 	_snap_timer -= GameTime.unscaled_delta
-	if _snap_timer > 0.0 or Net.remote_id == 0:
+	if _snap_timer > 0.0 or not Net.has_clients():
 		return
 	_snap_timer += 1.0 / Net.SNAPSHOT_RATE
 	if _snap_timer < 0.0:
 		_snap_timer = 0.0
-	Net.send_snapshot(_build_snapshot())
+	var b := _build_snapshot()
+	Net.send_snapshots(func(p: String) -> PackedByteArray:
+		var c := b.duplicate()
+		c.encode_u32(10, _remote_ack.get(p, 0))
+		c.encode_u32(14, _remote_kills.get(p, 0))
+		return c)
 
 
 static func _qp(v: float) -> int:
@@ -1050,7 +1071,8 @@ static func _qp(v: float) -> int:
 
 
 ## Layout (little endian):
-##   u8 version, f64 host time, u8 flags (1 = paused), u32 command ack, u32 Player2 kills,
+##   u8 version, f64 host time, u8 flags (1 = paused), u32 command ack, u32 kills (both of the
+##   receiving client, filled in per client by _host_send_snapshot),
 ##   9 x (u16 ship count, u16 ship limit),
 ##   u16 planets, per planet: u8 owner, u8 flags (1 = countdown), s16 link target (-1 none),
 ##   u32 ships, per ship: u32 id, u8 owner, u8 flags (1 = fired), u16 planet, 3 x s16 position
@@ -1066,8 +1088,6 @@ func _build_snapshot() -> PackedByteArray:
 	b.encode_u8(0, 1)
 	b.encode_double(1, Time.get_ticks_usec() / 1000000.0)
 	b.encode_u8(9, 1 if GameTime.paused() else 0)
-	b.encode_u32(10, _remote_ack)
-	b.encode_u32(14, _remote_kills)
 	var o := 18
 	for n in names:
 		b.encode_u16(o, clampi(ship_counts.get(n, 0), 0, 65535))
@@ -1119,21 +1139,26 @@ func _check_end_versus() -> void:
 			if k != h and k != "neutral" and ship_counts[k] > 3:
 				others_alive = true
 		if not others_alive:
-			_end_game(h == "Player1")
-			_send_remote_result(h == "Player2")
+			for h2 in human_players:
+				if h2 == "Player1":
+					_end_game(h == "Player1")
+				else:
+					_send_remote_result(h2, h2 == h)
 			return
-	if owned.get("Player1", 0) == 0 and ship_counts["Player1"] < 1:
-		_end_game(false)
-	if owned.get("Player2", 0) == 0 and ship_counts["Player2"] < 1:
-		_send_remote_result(false)
+	for h in human_players:
+		if owned.get(h, 0) == 0 and ship_counts[h] < 1:
+			if h == "Player1":
+				_end_game(false)
+			else:
+				_send_remote_result(h, false)
 
 
-func _send_remote_result(won: bool) -> void:
+func _send_remote_result(player: String, won: bool) -> void:
 	var r := 1 if won else 0
-	if _remote_result == r:
+	if _remote_result.get(player, -1) == r:
 		return
-	_remote_result = r
-	Net.send_game_over(won)
+	_remote_result[player] = r
+	Net.send_game_over(player, won)
 
 
 # ------------------------------------------------------------------ versus: client

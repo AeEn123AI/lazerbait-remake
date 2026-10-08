@@ -130,27 +130,29 @@ room shows through, and the platform and planets stay visible.
 * If the device can't do passthrough, the menu shows "Passthrough = On (unsupported)" and the game stays opaque.
 
 ## Versus mode (networked multiplayer)
-A remake addition: two people play against each other over the network, each on their own machine, in VR or on
-desktop, in any combination (for example a Quest against a PC).
+A remake addition: up to **8 people** play against each other over the network, each on their own machine, in VR or
+on desktop, in any combination (for example Quests against PCs).
 
 * **Host**: in the main menu, turn to the **"Versus (network)"** panel behind you on the left and click
-  **Host a Game**. The status line shows your address. The host's menu settings (ships, speed, players, A.I., map
-  size) are used for the match.
-* **Join**: click **Find Games**. Games on the same network appear within a second or two. Click **Join ...** (and
-  **Next Game** if there are several). On desktop you can also press **J** and type an address.
-* The match starts as soon as the second player joins. The host plays Player1 and the joining player plays Player2.
-  Each player keeps their chosen colour; if both chose the same one, the joining player gets a different colour.
-  With 4 or 8 players selected, the extra players are A.I.s.
-* Either player can pause. Quitting to the menu ends the session. If the joining player leaves, an A.I. takes
-  over their side. If the host leaves, the joining player can return to the menu.
+  **Host a Game**. The status line shows your address and who has joined. When everyone is in, click **Start**. The
+  host's menu settings (ships, speed, players, A.I., map size) are used for the match.
+* **Join**: click **Find Games**. Games on the same network appear within a second or two, with their player
+  count. Click **Join ...** (and **Next Game** if there are several). On desktop you can also press **J** and type an
+  address. Then wait for the host to start.
+* The host plays Player1. Joining players get Player2, Player3, ... in the order they joined. If more humans
+  joined than the "Number of Players" setting allows, the map grows to 4 or 8 players. Free slots are A.I.s.
+  Everyone keeps their chosen colour; a player who picked a colour already taken gets a different one.
+* Anyone can pause. If a joining player leaves, an A.I. takes over their side and the others are told. If the host
+  leaves, the match ends for everyone and players can return to the menu.
 * Wins are counted in a new "Versus Wins" stat.
 
-Command line (after `--`): `--host` starts hosting, `--join=ADDRESS[:PORT]` joins a game.
+Command line (after `--`): `--host` starts hosting, `--join=ADDRESS[:PORT]` joins a game, and `--autostart=N` makes a
+host start automatically once N players (itself included) are in.
 
 Networking details: ENet over UDP port **7777**. LAN discovery uses UDP 7778 (queries) and 7779 (beacons), so allow
 these through your firewall. The host runs the whole simulation (`scripts/game/master_controller.gd`). About 20
-times a second it sends the client a compact snapshot: planet owners, countdowns, links, ship counts, and each
-ship's position as int16 values (roughly 14 bytes per ship). The client interpolates the snapshots about 0.12 s
+times a second it sends each client a compact snapshot: planet owners, countdowns, links, ship counts, and each
+ship's position as int16 values (roughly 14 bytes per ship). Each client interpolates the snapshots about 0.12 s
 behind and sends its commands (send ships / link / unlink / pause) back to the host, which applies them like a local
 click. Discovery only finds games on the local network. To play over the internet, forward UDP 7777 on the host's
 router and join by address. The Meta Quest preset requests the `INTERNET` permission for this.

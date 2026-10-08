@@ -475,10 +475,13 @@ func _process(_d: float) -> void:
 			"start":
 				if _left_click:
 					hand.vibrate(0.1, 0.3)
-					Net.close() # single player: stop hosting / searching
-					_apply_settings()
-					_leaving = true
-					main.change_level("game")
+					if Net.is_host() and Net.ready_count() > 0:
+						_start_versus()
+					else:
+						Net.close() # single player: stop hosting / searching / waiting
+						_apply_settings()
+						_leaving = true
+						main.change_level("game")
 			"NumberOfShips":
 				_inc_setting("1")
 			"GameSpeed":
@@ -679,6 +682,7 @@ func _build_net_panel() -> void:
 	Net.status_changed.connect(_on_net_status)
 	Net.hosts_changed.connect(_update_net_texts)
 	Net.match_starting.connect(_on_match_starting)
+	Net.lobby_changed.connect(_on_lobby_changed)
 	_update_net_texts()
 	if not rig.vr:
 		_address_box = LineEdit.new()
@@ -755,14 +759,14 @@ func _update_net_texts() -> void:
 		net_join_text.text = "Find Games"
 	else:
 		var h: Dictionary = hosts[_host_index % hosts.size()]
-		net_join_text.text = "Join %s" % h["name"]
+		net_join_text.text = "Join %s (%d/%d)" % [h["name"], h.get("players", 1), Net.MAX_PLAYERS]
 	var show_next := hosts.size() > 1 and not Net.is_client()
 	net_next_text.text = "Next Game (%d/%d)" % [_host_index % maxi(hosts.size(), 1) + 1, hosts.size()] if show_next else ""
 	planets["NetNext"].mesh.visible = show_next
 	planets["NetNext"].set_collider_enabled(show_next)
 	var st := Net.status
 	if st == "":
-		st = "Play against a friend on your network.\nThe host's menu settings are used;\nextra players are A.I.s."
+		st = "Play against friends on your network (up to 8).\nThe host's menu settings are used and the host\nclicks Start; the other slots are A.I.s."
 	net_status_text.text = st
 
 
@@ -770,18 +774,36 @@ func _on_net_status(_t: String) -> void:
 	_update_net_texts()
 
 
+## Client: the host started the match.
 func _on_match_starting() -> void:
 	if _leaving:
 		return
-	if Net.is_host():
-		_apply_settings()
-		Net.begin_match()
 	_leaving = true
 	main.change_level("game")
 
 
+## Host: start the match with everyone who joined. The map grows to fit the humans
+## (4 or 8 players); the remaining slots are A.I.s.
+func _start_versus() -> void:
+	_apply_settings()
+	var humans := 1 + Net.ready_count()
+	if humans > Settings.number_of_players:
+		Settings.number_of_players = 4 if humans <= 4 else 8
+	Net.begin_match()
+	_leaving = true
+	main.change_level("game")
+
+
+## `--autostart=N` (after `--`): a host starts as soon as N players (itself included) are in.
+func _on_lobby_changed() -> void:
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--autostart=") and Net.is_host() and not _leaving:
+			if 1 + Net.ready_count() >= int(a.substr(12)):
+				_start_versus()
+
+
 func teardown() -> void:
-	for pair in [[Net.status_changed, _on_net_status], [Net.hosts_changed, _update_net_texts], [Net.match_starting, _on_match_starting]]:
+	for pair in [[Net.status_changed, _on_net_status], [Net.hosts_changed, _update_net_texts], [Net.match_starting, _on_match_starting], [Net.lobby_changed, _on_lobby_changed]]:
 		if pair[0].is_connected(pair[1]):
 			pair[0].disconnect(pair[1])
 	if _address_box:

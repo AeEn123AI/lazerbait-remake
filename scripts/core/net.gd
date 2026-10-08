@@ -1,8 +1,9 @@
 extends Node
 ## Networked versus mode (remake addition).
 ##
-## Host-authoritative: the host runs the whole simulation (MasterController) as Player1 and the
-## joining player controls Player2. The client only renders: it receives the map once, then
+## Host-authoritative: the host runs the whole simulation (MasterController) as Player1 and
+## up to seven joining players control Player2, Player3, ... in the order they joined; the host
+## starts the match from the menu's Start planet. Clients only render: each receives the map once, then
 ## ~20 snapshots a second (ships, planet owners, countdowns, links, ship counts) and sends its
 ## commands (send ships / link / unlink / pause) back to the host, which applies them exactly
 ## like a local click.
@@ -17,29 +18,34 @@ signal hosts_changed
 signal match_starting          # both sides: switch to the game level now
 signal map_received(data: Dictionary)
 signal snapshot_received(data: PackedByteArray)
-signal command_received(cmd: Array)
+signal command_received(player: String, cmd: Array)
 signal game_over_received(won: bool)
-signal remote_left
+signal lobby_changed
+signal notice(text: String)        # in-match message (someone left)
+signal remote_left(player: String) # host: a client left; client: the host left ("Player1")
 
 const PORT := 7777
 const BEACON_PORT := 7779      # clients listen here for host beacons
 const QUERY_PORT := 7778       # hosts listen here for client queries
-const PROTOCOL := 1
+const PROTOCOL := 2
+const MAX_PLAYERS := 8
 const MAGIC := "lazerbait-vs"
 const SNAPSHOT_RATE := 20.0
 const HOST_TIMEOUT := 4.0
 
 enum Role { OFFLINE, HOST, CLIENT }
 
-## Settings fields the host decides for both players.
+## Settings fields the host decides for every player.
 const SETTINGS_KEYS := ["ship_translational_speed", "ship_rotational_speed", "number_of_players",
 	"number_of_ships", "game_speed", "ai_diff", "planet_count", "min_x", "max_x", "min_z", "max_z"]
 
 var role := Role.OFFLINE
 var in_match := false
-var remote_id := 0
-var remote_color := Color(1, 0, 0, 1) / 1.5
-var remote_name := ""
+var local_player := "Player1"
+## host: peer id -> {name, color, ready (said hello), player (assigned at match start)}
+## client: the lobby as reported by the host, peer id -> {name}
+var remotes := {}
+var _join_order: Array = []     # host: peer ids in the order they connected
 var status := ""
 var pending_map := {}           # client: map that arrived before the game level was ready
 var found_hosts := {}           # "ip:port" -> {name, ip, port, seen}
@@ -94,7 +100,7 @@ func _set_status(t: String) -> void:
 func host(port := PORT) -> bool:
 	close()
 	_peer = ENetMultiplayerPeer.new()
-	var err := _peer.create_server(port, 1)
+	var err := _peer.create_server(port, MAX_PLAYERS - 1)
 	if err != OK:
 		_peer = null
 		_set_status("Could not host on port %d (in use?)" % port)
@@ -107,8 +113,7 @@ func host(port := PORT) -> bool:
 	if _udp.bind(QUERY_PORT) != OK:
 		push_warning("[Net] discovery query port %d busy; relying on beacons" % QUERY_PORT)
 	_beacon_timer = 0.0
-	var ips := local_addresses()
-	_set_status("Hosting on %s - waiting for an opponent..." % (ips[0] if ips.size() > 0 else "this machine"))
+	_lobby_status()
 	return true
 
 
@@ -163,7 +168,9 @@ func close() -> void:
 	multiplayer.multiplayer_peer = null
 	role = Role.OFFLINE
 	in_match = false
-	remote_id = 0
+	local_player = "Player1"
+	remotes.clear()
+	_join_order.clear()
 	pending_map = {}
 	found_hosts.clear()
 	_set_status("")
@@ -222,7 +229,10 @@ func _process(delta: float) -> void:
 			var key := "%s:%d" % [ip, port]
 			if not found_hosts.has(key):
 				changed = true
-			found_hosts[key] = {"name": str(b.get("name", ip)), "ip": ip, "port": port, "seen": Time.get_ticks_msec()}
+			var entry := {"name": str(b.get("name", ip)), "ip": ip, "port": port, "players": int(b.get("players", 1)), "seen": Time.get_ticks_msec()}
+			if found_hosts.has(key) and found_hosts[key]["players"] != entry["players"]:
+				changed = true
+			found_hosts[key] = entry
 		var now := Time.get_ticks_msec()
 		for k in found_hosts.keys():
 			if now - int(found_hosts[k]["seen"]) > HOST_TIMEOUT * 1000.0:
@@ -243,36 +253,81 @@ func _process(delta: float) -> void:
 
 
 func _beacon() -> PackedByteArray:
-	return JSON.stringify({"magic": MAGIC, "protocol": PROTOCOL, "name": player_name(), "port": PORT}).to_utf8_buffer()
+	return JSON.stringify({"magic": MAGIC, "protocol": PROTOCOL, "name": player_name(), "port": PORT,
+		"players": 1 + ready_count()}).to_utf8_buffer()
 
 
 # ------------------------------------------------------------------ connection events
 
+## Host: joined players that completed the handshake.
+func ready_count() -> int:
+	var n := 0
+	for id in remotes.keys():
+		if remotes[id]["ready"]:
+			n += 1
+	return n
+
+
+## Host: the player name controlled by peer `id` ("" if none).
+func player_of(id: int) -> String:
+	return remotes[id].get("player", "") if remotes.has(id) else ""
+
+
+## Host: human players other than Player1 -> {name, color}, in slot order.
+func remote_players() -> Dictionary:
+	var out := {}
+	for id in _join_order:
+		var r: Dictionary = remotes[id]
+		if r.get("player", "") != "":
+			out[r["player"]] = r
+	return out
+
+
+func _lobby_status() -> void:
+	var ips := local_addresses()
+	var where: String = ips[0] if ips.size() > 0 else "this machine"
+	var names := [player_name() + " (you)"]
+	for id in _join_order:
+		if remotes[id]["ready"]:
+			names.append(remotes[id]["name"])
+	if names.size() == 1:
+		_set_status("Hosting on %s - waiting for players..." % where)
+	else:
+		_set_status("Hosting on %s - %d players: %s\nClick Start to play" % [where, names.size(), ", ".join(names)])
+	lobby_changed.emit()
+	if role == Role.HOST and not in_match:
+		_lobby.rpc(names)
+
+
 func _on_peer_connected(id: int) -> void:
 	if role != Role.HOST:
 		return
-	if remote_id != 0 or in_match:
+	if in_match:
 		_peer.disconnect_peer(id)
 		return
-	remote_id = id
-	_set_status("Opponent connecting...")
+	remotes[id] = {"name": "Player", "color": Color(1, 0, 0, 1) / 1.5, "ready": false}
+	_join_order.append(id)
 
 
 func _on_peer_disconnected(id: int) -> void:
-	if role != Role.HOST or id != remote_id:
+	if role != Role.HOST or not remotes.has(id):
 		return
-	remote_id = 0
-	print("[Net] opponent disconnected")
+	var r: Dictionary = remotes[id]
+	remotes.erase(id)
+	_join_order.erase(id)
+	print("[Net] %s disconnected" % r["name"])
 	if in_match:
-		remote_left.emit()
+		if r.get("player", "") != "":
+			var msg := "%s left - the A.I. takes over" % r["name"]
+			_notice.rpc(msg)
+			remote_left.emit(r["player"])
+			notice.emit(msg)
 	else:
-		var ips := local_addresses()
-		_set_status("Opponent left. Hosting on %s - waiting..." % (ips[0] if ips.size() > 0 else "this machine"))
+		_lobby_status()
 
 
 func _on_connected() -> void:
-	remote_id = 1
-	_set_status("Connected - waiting for the host...")
+	_set_status("Connected - waiting for the host to start...")
 	_hello.rpc_id(1, PROTOCOL, MenuLevel.MENU_COLORS[Settings.color_settings_count], player_name())
 
 
@@ -288,11 +343,11 @@ func _on_server_disconnected() -> void:
 	_peer = null
 	multiplayer.multiplayer_peer = null
 	role = Role.OFFLINE
-	remote_id = 0
+	remotes.clear()
 	print("[Net] disconnected from host")
 	if was_in_match:
 		in_match = false
-		remote_left.emit()
+		remote_left.emit("Player1")
 	else:
 		_set_status("Disconnected from host")
 
@@ -301,16 +356,17 @@ func _on_server_disconnected() -> void:
 
 @rpc("any_peer", "call_remote", "reliable")
 func _hello(protocol: int, color: Color, pname: String) -> void:
-	if role != Role.HOST or multiplayer.get_remote_sender_id() != remote_id:
+	var id := multiplayer.get_remote_sender_id()
+	if role != Role.HOST or not remotes.has(id):
 		return
 	if protocol != PROTOCOL:
-		_reject.rpc_id(remote_id, "Version mismatch (host %d, you %d)" % [PROTOCOL, protocol])
-		_peer.disconnect_peer(remote_id, false)
+		_reject.rpc_id(id, "Version mismatch (host %d, you %d)" % [PROTOCOL, protocol])
+		_peer.disconnect_peer(id, false)
 		return
-	remote_color = color
-	remote_name = pname
-	_set_status("%s joined - starting!" % pname)
-	match_starting.emit()
+	remotes[id]["color"] = color
+	remotes[id]["name"] = pname
+	remotes[id]["ready"] = true
+	_lobby_status()
 
 
 @rpc("authority", "call_remote", "reliable")
@@ -318,15 +374,33 @@ func _reject(reason: String) -> void:
 	_set_status(reason)
 
 
+@rpc("authority", "call_remote", "reliable")
+func _lobby(names: Array) -> void:
+	if role == Role.CLIENT and not in_match:
+		_set_status("Connected - %d players: %s\nWaiting for the host to start..." % [names.size(), ", ".join(names)])
+
+
 ## Host: called by the menu after it applied its settings, right before loading the game.
+## Assigns Player2, Player3, ... in join order and tells every client to start.
 func begin_match() -> void:
-	if role != Role.HOST or remote_id == 0:
+	if role != Role.HOST or ready_count() == 0:
 		return
 	in_match = true
 	var cfg := {}
 	for k in SETTINGS_KEYS:
 		cfg[k] = Settings.get(k)
-	_start.rpc_id(remote_id, cfg)
+	var slot := 2
+	for id in _join_order.duplicate():
+		if not remotes[id]["ready"]:
+			_peer.disconnect_peer(id) # still handshaking: too late for this match
+			continue
+		remotes[id]["player"] = "Player%d" % slot
+		slot += 1
+	for id in _join_order:
+		if remotes.has(id) and remotes[id].get("player", "") != "":
+			var c := cfg.duplicate()
+			c["player"] = remotes[id]["player"]
+			_start.rpc_id(id, c)
 
 
 @rpc("authority", "call_remote", "reliable")
@@ -336,17 +410,35 @@ func _start(cfg: Dictionary) -> void:
 	for k in SETTINGS_KEYS:
 		if cfg.has(k):
 			Settings.set(k, cfg[k])
+	local_player = str(cfg.get("player", "Player2"))
 	in_match = true
 	pending_map = {}
 	_set_status("Starting...")
 	match_starting.emit()
 
 
+@rpc("authority", "call_remote", "reliable")
+func _notice(text: String) -> void:
+	notice.emit(text)
+
+
 # ------------------------------------------------------------------ game RPCs
 
+func _match_peers() -> Array:
+	var out := []
+	for id in _join_order:
+		if remotes.has(id) and remotes[id].get("player", "") != "":
+			out.append(id)
+	return out
+
+
+func has_clients() -> bool:
+	return role == Role.HOST and not _match_peers().is_empty()
+
+
 func send_map(data: Dictionary) -> void:
-	if role == Role.HOST and remote_id != 0:
-		_map.rpc_id(remote_id, data)
+	for id in _match_peers():
+		_map.rpc_id(id, data)
 
 
 @rpc("authority", "call_remote", "reliable")
@@ -355,9 +447,10 @@ func _map(data: Dictionary) -> void:
 	map_received.emit(data)
 
 
-func send_snapshot(data: PackedByteArray) -> void:
-	if role == Role.HOST and remote_id != 0:
-		_snapshot.rpc_id(remote_id, data)
+## Host: `make(player)` builds the snapshot for one client (they differ only in the header).
+func send_snapshots(make: Callable) -> void:
+	for id in _match_peers():
+		_snapshot.rpc_id(id, make.call(remotes[id]["player"]))
 
 
 @rpc("authority", "call_remote", "unreliable_ordered", 1)
@@ -373,14 +466,16 @@ func send_command(cmd: Array) -> void:
 
 @rpc("any_peer", "call_remote", "reliable")
 func _command(cmd: Array) -> void:
-	if role != Role.HOST or multiplayer.get_remote_sender_id() != remote_id:
+	var p := player_of(multiplayer.get_remote_sender_id())
+	if role != Role.HOST or p == "":
 		return
-	command_received.emit(cmd)
+	command_received.emit(p, cmd)
 
 
-func send_game_over(won: bool) -> void:
-	if role == Role.HOST and remote_id != 0:
-		_game_over.rpc_id(remote_id, won)
+func send_game_over(player: String, won: bool) -> void:
+	for id in _match_peers():
+		if remotes[id]["player"] == player:
+			_game_over.rpc_id(id, won)
 
 
 @rpc("authority", "call_remote", "reliable")
@@ -388,6 +483,6 @@ func _game_over(won: bool) -> void:
 	game_over_received.emit(won)
 
 
-## Leaving the match (back to the menu) ends the session for both players.
+## Leaving the match (back to the menu) ends the session (for everyone, when the host leaves).
 func leave_match() -> void:
 	close()
