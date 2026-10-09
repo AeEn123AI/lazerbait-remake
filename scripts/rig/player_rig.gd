@@ -34,6 +34,8 @@ var _help_visible := true
 var desktop_controls_enabled := true
 var desktop_move_speed := 2.0      # metres (rig units) / second
 var allow_vertical := true
+## Desktop menu: keep `content` where it is so WASD walks through the menu instead of carrying it along.
+var content_fixed := false
 
 var _fade_mesh: MeshInstance3D
 var _fade_mat: ShaderMaterial
@@ -291,6 +293,8 @@ func head_position() -> Vector3:
 
 
 func _update_content() -> void:
+	if content_fixed:
+		return
 	content.global_transform = Transform3D(origin.global_transform.basis.orthonormalized().scaled(Vector3.ONE * _scale), origin.global_position)
 
 
@@ -405,6 +409,7 @@ func _process(delta: float) -> void:
 
 ## Remove level specific UI from the hands (keeps the controller models).
 func clear_hand_ui() -> void:
+	content_fixed = false
 	if left:
 		left.desktop_pad_latched = false
 	for h in [left, right]:

@@ -111,6 +111,8 @@ func setup(p_main, p_rig: PlayerRig) -> void:
 			if model:
 				model.visible = false
 		rig.allow_vertical = false
+		rig.content_fixed = true
+		rig.content.global_transform = Transform3D.IDENTITY
 		rig.desktop_move_speed = 1.5
 		rig.set_desktop_yaw_pitch(0.0, deg_to_rad(-8.0))
 		if rig.touch:
