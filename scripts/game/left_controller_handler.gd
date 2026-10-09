@@ -78,8 +78,9 @@ func _build_ui() -> void:
 	tool_tips = [mini_tip, rt[2], rt[1], rt[0], drag_tip]
 	if not rig.vr:
 		# no grips on desktop: those tips would be misleading
+		var hint := "Two fingers:\nmove the view" if rig.touch else "Move: WASD/QE\nLook: Right Mouse"
 		for t in [drag_tip, rt[1]]:
-			t[2].text = "Move: WASD/QE\nLook: Right Mouse"
+			t[2].text = hint
 
 
 func _menu_sphere(parent: Node3D, n: String, pos: Vector3, tag: String) -> PlanetController:

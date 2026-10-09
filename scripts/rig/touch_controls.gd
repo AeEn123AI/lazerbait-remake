@@ -69,15 +69,15 @@ func _layout() -> void:
 	_buttons.clear()
 	var add := func(id: String, label: String, x: float, y: float, w := 1.0, hold := false, toggle := false) -> void:
 		_buttons.append({"id": id, "label": label, "rect": Rect2(x, y, u * w, u), "hold": hold, "toggle": toggle})
-	add.call("mode", "Look" if not two_finger_look else "Pan", vs.x - u - m, m)
+	add.call("mode", "Look" if two_finger_look else "Pan", vs.x - u - m, m)
 	if layout == "game":
 		add.call("pause", "||", vs.x - 2.0 * (u + m), m)
 		add.call("menu", "Menu", m, vs.y - u - m, 1.4, false, true)
 		add.call("map", "Map", m + u * 1.4 + m, vs.y - u - m, 1.2, true)
 		for i in 4:
-			add.call("pct%d" % (i + 1), "%d%%" % (25 * (i + 1)), vs.x - (4 - i) * (u + m), vs.y - u - m)
+			add.call("pct%d" % (i + 1), "%d%%" % (25 * (i + 1)), vs.x - u - m, vs.y - (4 - i) * (u + m) - m * 0.0)
 	else:
-		add.call("join", "Join", m, vs.y - u - m, 1.4)
+		add.call("join", "Join", vs.x - 2.0 * (u + m) - u * 0.4, m, 1.4)
 	_canvas.queue_redraw()
 
 

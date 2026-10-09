@@ -76,7 +76,7 @@ func _setup_desktop_view() -> void:
 	for h in [rig.left, rig.right]:
 		var model: Node3D = h.ui.get_node_or_null("Model")
 		if model:
-			model.visible = true
+			model.visible = not rig.touch
 	rig.allow_vertical = true
 	rig.desktop_move_speed = 2.0
 	# Stand back from the home planet a little, looking at the centre of the map.
