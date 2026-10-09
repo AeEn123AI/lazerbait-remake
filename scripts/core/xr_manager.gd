@@ -8,6 +8,8 @@ signal passthrough_changed(active: bool)
 signal vr_session_started
 
 var vr := false
+## Phone/tablet: flat screen driven by touch (on-screen buttons + gestures). Force with `--touch`.
+var touch := false
 var xr_interface: XRInterface = null
 var passthrough_active := false
 var _session_running := false
@@ -47,6 +49,13 @@ func _ready() -> void:
 			print("[Lazerbait] Desktop mode (Android: set export preset XR Mode to OpenXR for VR)")
 		else:
 			print("[Lazerbait] Desktop mode")
+	touch = not vr and not force_desktop_input(args) and (OS.has_feature("android") or OS.has_feature("ios") or args.has("--touch"))
+	if touch:
+		print("[Lazerbait] Touch controls")
+
+
+func force_desktop_input(args: PackedStringArray) -> bool:
+	return args.has("--desktop") and not args.has("--touch")
 
 
 ## The user recentered from the system (e.g. holding the Meta button on Quest).

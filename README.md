@@ -84,6 +84,13 @@ Open the folder in the Godot 4.6 editor and press Play, or run `godot --path .`.
    flat window and `[Lazerbait] Desktop mode` is printed. The included preset selects OpenXR; if you make your own
    preset, set XR Mode accordingly and enable the vendors plugin's Meta options.
 
+4. Android phone / tablet (touch, no VR): use the **Android (phone)** preset (`xr_features/xr_mode=0`, landscape):
+   ```sh
+   godot --headless --path . --export-release "Android (phone)" build/android/Lazerbait-phone.apk
+   ```
+   Same prerequisites as the Quest build (export templates, SDK, Gradle build template). Touch controls are enabled
+   automatically on Android when not running in VR; use `--touch` to try them on a desktop with a touchscreen.
+
 Exported builds contain the extracted assets, so **don't redistribute them**. Only the source is meant to be
 shared.
 
@@ -114,6 +121,18 @@ shared.
 | Look | Hold right mouse button and move |
 | Move | WASD, Q/E (down/up), Shift = fast, mouse wheel = forward/back, middle mouse drag = pan |
 | Help text / fullscreen | H / F11 |
+
+### Android phone / tablet (touch)
+| Action | Control |
+|---|---|
+| Point / select / drag a link | One finger (tap = click, drag from planet to planet = link) |
+| Look or pan | Two-finger drag; the **Pan / Look** button (top right) switches which one |
+| Move forward / back | Pinch / spread two fingers |
+| % of ships | **25% 50% 75% 100%** buttons |
+| Mini-map | Hold **Map** |
+| In-game menu planets | **Menu** (toggle), then tap a planet |
+| Pause | **||** button |
+| Join a versus game by address | **Join** button in the main menu (LAN discovery works too) |
 
 On desktop the two controllers are shown as "virtual controllers" held in view, so the original controller-mounted
 UI is still there: ship limit, % selector, mini-map and menu planets.

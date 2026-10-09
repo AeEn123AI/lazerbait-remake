@@ -28,6 +28,7 @@ var pitch := 0.0
 var _looking := false
 var _panning := false
 var desktop_hud: CanvasLayer
+var touch: TouchControls          # phones/tablets only
 var _help_label: Label
 var _help_visible := true
 var desktop_controls_enabled := true
@@ -165,6 +166,37 @@ func _build_desktop() -> void:
 	_help_label.position = Vector2(12, 8)
 	desktop_hud.add_child(_help_label)
 	set_help_text("")
+	if XRManager.touch:
+		touch = TouchControls.new()
+		touch.name = "TouchControls"
+		touch.rig = self
+		add_child(touch)
+		# Logical pixels follow the display density so text and buttons stay a usable size.
+		get_window().content_scale_factor = clampf(DisplayServer.screen_get_scale(), 1.0, 3.0)
+
+
+## Layout of the on-screen buttons: "menu" or "game". No-op without touch controls.
+func set_touch_layout(l: String) -> void:
+	if touch:
+		touch.set_layout(l)
+
+
+## Two-finger gesture: `drag` moves the view (look or pan), `pinch` (pixels) moves forward / back.
+func touch_camera(drag: Vector2, pinch: float, look: bool) -> void:
+	if look:
+		yaw -= drag.x * 0.006
+		pitch -= drag.y * 0.006
+		_apply_look()
+	else:
+		var b := head.global_transform.basis
+		var k := 0.006 * _scale
+		set_rig_position(origin.global_position - b.x * drag.x * k + b.y * drag.y * k)
+	if absf(pinch) > 0.0:
+		var dir := -head.global_transform.basis.z
+		if not allow_vertical:
+			dir.y = 0.0
+			dir = dir.normalized()
+		set_rig_position(origin.global_position + dir * pinch * 0.012 * _scale)
 
 
 func set_help_text(t: String) -> void:
@@ -304,7 +336,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.button_index == MOUSE_BUTTON_LEFT:
-			right.desktop_trigger = mb.pressed
+			if touch == null: # touch controls drive the pointer themselves
+				right.desktop_trigger = mb.pressed
 		elif mb.button_index == MOUSE_BUTTON_RIGHT:
 			_looking = mb.pressed and desktop_controls_enabled
 		elif mb.button_index == MOUSE_BUTTON_MIDDLE:
@@ -350,7 +383,7 @@ func _process(delta: float) -> void:
 	if not is_equal_approx(_fade_alpha, _fade_target):
 		_set_fade(move_toward(_fade_alpha, _fade_target, _fade_speed * delta))
 	if not vr:
-		left.desktop_trigger = Input.is_key_pressed(KEY_TAB)
+		left.desktop_trigger = Input.is_key_pressed(KEY_TAB) or (touch != null and touch.map_held())
 		if desktop_controls_enabled:
 			var mv := Vector3.ZERO
 			if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): mv.z -= 1

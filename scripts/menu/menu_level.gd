@@ -113,8 +113,13 @@ func setup(p_main, p_rig: PlayerRig) -> void:
 		rig.allow_vertical = false
 		rig.desktop_move_speed = 1.5
 		rig.set_desktop_yaw_pitch(0.0, deg_to_rad(-8.0))
-		rig.set_help_text("LMB: click planets / tutorials   RMB drag: look around   WASD: move   F11: fullscreen   H: hide help\n" +
-			"Versus: the panel behind you on the left   J: join a game by address")
+		if rig.touch:
+			rig.set_touch_layout("menu")
+		if rig.touch:
+			rig.set_help_text("Tap: click planets / tutorials   Two fingers: look around, pinch: move\nVersus: the panel behind you on the left   Join: enter a host address")
+		else:
+			rig.set_help_text("LMB: click planets / tutorials   RMB drag: look around   WASD: move   F11: fullscreen   H: hide help\n" +
+				"Versus: the panel behind you on the left   J: join a game by address")
 	XRManager.passthrough_changed.connect(_on_passthrough_changed)
 	_on_passthrough_changed(XRManager.passthrough_active)
 
@@ -692,7 +697,10 @@ func _build_net_panel() -> void:
 		_address_box.visible = false
 		_address_box.text_submitted.connect(_on_address_submitted)
 		_address_box.gui_input.connect(_on_address_input)
+		_address_box.focus_exited.connect(func(): if _address_box.visible: _close_address_box())
 		rig.desktop_hud.add_child(_address_box)
+		if rig.touch:
+			rig.touch.join_requested.connect(_show_address_box)
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
@@ -700,11 +708,17 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		return
 	var k := event as InputEventKey
 	if k and k.pressed and not k.echo and k.keycode == KEY_J and not _address_box.visible:
-		_address_box.visible = true
-		_address_box.text = ""
-		_address_box.grab_focus()
-		rig.desktop_controls_enabled = false
+		_show_address_box()
 		get_viewport().set_input_as_handled()
+
+
+func _show_address_box() -> void:
+	if _address_box == null or _address_box.visible:
+		return
+	_address_box.visible = true
+	_address_box.text = ""
+	_address_box.grab_focus()
+	rig.desktop_controls_enabled = false
 
 
 func _on_address_input(event: InputEvent) -> void:
