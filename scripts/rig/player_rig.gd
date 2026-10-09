@@ -183,16 +183,11 @@ func set_touch_layout(l: String) -> void:
 		touch.set_layout(l)
 
 
-## Two-finger gesture: `drag` moves the view (look or pan), `pinch` (pixels) moves forward / back.
-func touch_camera(drag: Vector2, pinch: float, look: bool) -> void:
-	if look:
-		yaw -= drag.x * 0.006
-		pitch -= drag.y * 0.006
-		_apply_look()
-	else:
-		var b := head.global_transform.basis
-		var k := 0.006 * _scale
-		set_rig_position(origin.global_position - b.x * drag.x * k + b.y * drag.y * k)
+## Two-finger gesture: `drag` (pixels) turns the view, `pinch` (pixels) moves forward / back.
+func touch_camera(drag: Vector2, pinch: float) -> void:
+	yaw -= drag.x * 0.006
+	pitch -= drag.y * 0.006
+	_apply_look()
 	if absf(pinch) > 0.0:
 		var dir := -head.global_transform.basis.z
 		if not allow_vertical:
@@ -402,6 +397,12 @@ func _process(delta: float) -> void:
 				var w := basis * Vector3(mv.x, 0, mv.z) + Vector3(0, mv.y, 0)
 				var sp := desktop_move_speed * _scale * (3.0 if Input.is_key_pressed(KEY_SHIFT) else 1.0)
 				set_rig_position(origin.global_position + w.normalized() * sp * delta)
+			if touch != null and (touch.move_vec != Vector2.ZERO or touch.vertical != 0.0):
+				var tv := Vector3(touch.move_vec.x, 0, touch.move_vec.y)
+				var tw := Basis(Vector3.UP, yaw) * tv
+				if allow_vertical:
+					tw.y = touch.vertical
+				set_rig_position(origin.global_position + tw * desktop_move_speed * _scale * delta)
 	left.poll()
 	right.poll()
 	_update_content()

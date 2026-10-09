@@ -78,7 +78,7 @@ func _build_ui() -> void:
 	tool_tips = [mini_tip, rt[2], rt[1], rt[0], drag_tip]
 	if not rig.vr:
 		# no grips on desktop: those tips would be misleading
-		var hint := "Two fingers:\nmove the view" if rig.touch else "Move: WASD/QE\nLook: Right Mouse"
+		var hint := "Joystick: move\nDrag: look" if rig.touch else "Move: WASD/QE\nLook: Right Mouse"
 		for t in [drag_tip, rt[1]]:
 			t[2].text = hint
 

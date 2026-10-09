@@ -125,9 +125,10 @@ shared.
 ### Android phone / tablet (touch)
 | Action | Control |
 |---|---|
-| Point / select / drag a link | One finger (tap = click, drag from planet to planet = link) |
-| Look or pan | Two-finger drag; the **Pan / Look** button (top right) switches which one |
-| Move forward / back | Pinch / spread two fingers |
+| Point / select / drag a link | One finger on a planet (tap = click, drag from planet to planet = link); a tap on empty space deselects |
+| Move | Joystick (bottom left); **Up / Dn** buttons next to it in a match |
+| Look | Drag one finger on empty space (or two fingers anywhere) |
+| Move forward / back (alternative) | Pinch / spread two fingers |
 | % of ships | **25% 50% 75% 100%** buttons |
 | Mini-map | Hold **Map** |
 | In-game menu planets | **Menu** (toggle), then tap a planet |

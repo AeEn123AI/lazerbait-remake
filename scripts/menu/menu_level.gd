@@ -118,7 +118,7 @@ func setup(p_main, p_rig: PlayerRig) -> void:
 		if rig.touch:
 			rig.set_touch_layout("menu")
 		if rig.touch:
-			rig.set_help_text("Tap: click planets / tutorials   Two fingers: look around, pinch: move\nVersus: the panel behind you on the left   Join: enter a host address")
+			rig.set_help_text("Tap: click planets / tutorials   Joystick: move   Drag empty space: look\nVersus: the panel behind you on the left   Join: enter a host address")
 		else:
 			rig.set_help_text("LMB: click planets / tutorials   RMB drag: look around   WASD: move   F11: fullscreen   H: hide help\n" +
 				"Versus: the panel behind you on the left   J: join a game by address")

@@ -92,7 +92,7 @@ func _setup_desktop_view() -> void:
 	_desktop_help = ("LMB: select / drag to link   1-4: % of ships   Tab: mini-map   Esc: menu   P: pause\n" +
 		"RMB drag: look   WASD/QE: move   Shift: fast   Wheel: forward/back   MMB drag: pan   H: hide help")
 	if rig.touch:
-		_desktop_help = "Tap: select / send   Drag planet to planet: link   Two fingers: move the view, pinch: forward / back"
+		_desktop_help = "Tap: select / send   Drag planet to planet: link   Joystick: move   Drag empty space: look"
 		rig.set_touch_layout("game")
 	rig.set_help_text(_desktop_help)
 

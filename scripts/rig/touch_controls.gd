@@ -1,9 +1,11 @@
 class_name TouchControls
 extends CanvasLayer
 ## Touch input for phones/tablets (non-VR). Replaces the mouse/keyboard emulation of the desktop rig:
-##   one finger          pointer (tap = click, drag = link / drag-to-link)
-##   two fingers drag    look around or pan (toggle with the "Pan"/"Look" button)
-##   two fingers pinch   move forward / back
+##   joystick (bottom left)  move (forward / back / strafe), like WASD; Up / Down buttons in matches
+##   one finger on a planet  pointer (tap = click, drag = link / drag-to-link)
+##   one finger on space     drag to look around (a tap there still clicks, e.g. to deselect)
+##   two fingers drag        look around
+##   two fingers pinch       move forward / back
 ## plus on-screen buttons for what the keyboard did (% of ships, mini-map, in-game menu, pause).
 
 signal join_requested
@@ -14,7 +16,8 @@ const BUTTON_ON := Color(0.2, 0.5, 0.35, 0.7)
 
 var rig: PlayerRig
 var layout := "menu"            # "menu" | "game"
-var two_finger_look := true     # two-finger drag looks (true) or pans (false)
+var move_vec := Vector2.ZERO    # joystick, x = right, y = back (like WASD), length 0..1
+var vertical := 0.0             # Up / Down buttons: +1 up, -1 down
 
 var _canvas: Control
 var _buttons: Array = []        # {id, label, rect, hold, toggle}
@@ -23,10 +26,17 @@ var _world_touch := {}          # touch index -> position
 var _gesture := false
 var _last_centre := Vector2.ZERO
 var _last_dist := 0.0
+var _free_touch := false        # single finger that started on empty space (may turn into a look-drag)
+var _looking := false
+var _start_pos := Vector2.ZERO
 var _pending_press := false     # single finger down, waiting to see whether a second one follows
 var _pending_time := 0.0
 var _press_frames := 0          # frames left to keep the pointer trigger held after a quick tap
 var _map_held := false
+var _stick_idx := -1
+var _stick_centre := Vector2.ZERO
+var _stick_radius := 80.0
+var _stick_knob := Vector2.ZERO
 var _px := 1.0
 
 
@@ -45,7 +55,6 @@ func _ready() -> void:
 
 func set_layout(l: String) -> void:
 	layout = l
-	two_finger_look = l == "menu"
 	_layout()
 
 
@@ -69,20 +78,27 @@ func _layout() -> void:
 	_buttons.clear()
 	var add := func(id: String, label: String, x: float, y: float, w := 1.0, hold := false, toggle := false) -> void:
 		_buttons.append({"id": id, "label": label, "rect": Rect2(x, y, u * w, u), "hold": hold, "toggle": toggle})
-	add.call("mode", "Look" if two_finger_look else "Pan", vs.x - u - m, m)
+	_stick_radius = u * 0.95
+	_stick_centre = Vector2(m + _stick_radius + u * 0.2, vs.y - m - _stick_radius - u * 0.2)
 	if layout == "game":
-		add.call("pause", "||", vs.x - 2.0 * (u + m), m)
-		add.call("menu", "Menu", m, vs.y - u - m, 1.4, false, true)
-		add.call("map", "Map", m + u * 1.4 + m, vs.y - u - m, 1.2, true)
+		add.call("pause", "||", vs.x - u - m, m)
+		add.call("menu", "Menu", m, u * 0.75 + m, 1.4, false, true)
+		add.call("map", "Map", m + u * 1.4 + m, u * 0.75 + m, 1.2, true)
+		add.call("up", "Up", _stick_centre.x + _stick_radius + m * 2.0, vs.y - 2.0 * (u * 0.7 + m) - m, 0.9, true)
+		add.call("down", "Dn", _stick_centre.x + _stick_radius + m * 2.0, vs.y - u * 0.7 - 2.0 * m, 0.9, true)
 		for i in 4:
-			add.call("pct%d" % (i + 1), "%d%%" % (25 * (i + 1)), vs.x - u - m, vs.y - (4 - i) * (u + m) - m * 0.0)
+			add.call("pct%d" % (i + 1), "%d%%" % (25 * (i + 1)), vs.x - u - m, vs.y - (4 - i) * (u + m))
 	else:
-		add.call("join", "Join", vs.x - 2.0 * (u + m) - u * 0.4, m, 1.4)
+		add.call("join", "Join", vs.x - u * 1.4 - m, m, 1.4)
 	_canvas.queue_redraw()
 
 
 func _draw_buttons() -> void:
 	var font := A.font("pixel")
+	var base := Color(0.1, 0.12, 0.14, 0.45)
+	_canvas.draw_circle(_stick_centre, _stick_radius, base)
+	_canvas.draw_arc(_stick_centre, _stick_radius, 0.0, TAU, 48, Color(1, 1, 1, 0.5), 2.0, true)
+	_canvas.draw_circle(_stick_centre + _stick_knob, _stick_radius * 0.42, Color(0.55, 0.75, 0.95, 0.75) if _stick_idx >= 0 else Color(1, 1, 1, 0.4))
 	for b in _buttons:
 		var r: Rect2 = b["rect"]
 		var down: bool = _button_touch.values().has(b["id"])
@@ -116,13 +132,26 @@ func _input(event: InputEvent) -> void:
 			_touch_up(t.index)
 	elif event is InputEventScreenDrag:
 		var d := event as InputEventScreenDrag
+		if d.index == _stick_idx:
+			_move_stick(d.position)
+			return
 		if _world_touch.has(d.index):
 			_world_touch[d.index] = d.position
 			if _gesture:
 				_update_gesture()
+			elif _free_touch and rig.desktop_controls_enabled:
+				if not _looking and d.position.distance_to(_start_pos) > 10.0:
+					_looking = true
+					_pending_press = false
+				if _looking:
+					rig.touch_camera(d.relative, 0.0)
 
 
 func _touch_down(idx: int, pos: Vector2) -> void:
+	if _stick_idx < 0 and pos.distance_to(_stick_centre) <= _stick_radius * 1.35:
+		_stick_idx = idx
+		_move_stick(pos)
+		return
 	var b := _button_at(pos)
 	if not b.is_empty():
 		_button_touch[idx] = b["id"]
@@ -133,9 +162,16 @@ func _touch_down(idx: int, pos: Vector2) -> void:
 	if _world_touch.size() == 1:
 		_pending_press = true
 		_pending_time = 0.0
+		_looking = false
+		_start_pos = pos
+		var o := rig.head.project_ray_origin(pos)
+		var d := rig.head.project_ray_normal(pos)
+		_free_touch = Picker.raycast_all(o, d, 1000.0).is_empty()
 	elif _world_touch.size() >= 2:
 		# A second finger: this is a camera gesture, not a click.
 		_pending_press = false
+		_free_touch = false
+		_looking = false
 		_press_frames = 0
 		rig.right.desktop_trigger = false
 		_gesture = true
@@ -143,6 +179,11 @@ func _touch_down(idx: int, pos: Vector2) -> void:
 
 
 func _touch_up(idx: int) -> void:
+	if idx == _stick_idx:
+		_stick_idx = -1
+		_stick_knob = Vector2.ZERO
+		move_vec = Vector2.ZERO
+		return
 	if _button_touch.has(idx):
 		var id: String = _button_touch[idx]
 		_button_touch.erase(idx)
@@ -152,7 +193,11 @@ func _touch_up(idx: int) -> void:
 	if not _world_touch.has(idx):
 		return
 	_world_touch.erase(idx)
-	if _pending_press and _world_touch.is_empty():
+	if _looking:
+		_looking = false
+		_free_touch = false
+		_pending_press = false
+	elif _pending_press and _world_touch.is_empty():
 		# Quick tap: hold the trigger for a few frames so the click registers.
 		_pending_press = false
 		rig.right.desktop_trigger = true
@@ -162,6 +207,17 @@ func _touch_up(idx: int) -> void:
 		_gesture = false
 	elif _world_touch.size() == 1 and _gesture:
 		_reset_gesture() # keep the gesture alive for the remaining finger (no accidental click)
+
+
+func _move_stick(pos: Vector2) -> void:
+	var v := pos - _stick_centre
+	if v.length() > _stick_radius:
+		v = v.normalized() * _stick_radius
+	_stick_knob = v
+	var n := v / _stick_radius
+	# small dead zone, then a gentle curve for fine control
+	var l := n.length()
+	move_vec = Vector2.ZERO if l < 0.12 else n.normalized() * ((l - 0.12) / 0.88)
 
 
 func _reset_gesture() -> void:
@@ -182,7 +238,7 @@ func _update_gesture() -> void:
 		return
 	var centre: Vector2 = (pts[0] + pts[1]) * 0.5
 	var dist: float = pts[0].distance_to(pts[1])
-	rig.touch_camera(centre - _last_centre, dist - _last_dist, two_finger_look)
+	rig.touch_camera(centre - _last_centre, dist - _last_dist)
 	_last_centre = centre
 	_last_dist = dist
 
@@ -191,10 +247,10 @@ func _press_button(id: String, down: bool) -> void:
 	match id:
 		"map":
 			_map_held = down
-		"mode":
-			if down:
-				two_finger_look = not two_finger_look
-				_layout()
+		"up":
+			vertical = 1.0 if down else (0.0 if vertical > 0.0 else vertical)
+		"down":
+			vertical = -1.0 if down else (0.0 if vertical < 0.0 else vertical)
 		"menu":
 			if down:
 				rig.left.desktop_pad_latched = not rig.left.desktop_pad_latched
@@ -214,7 +270,7 @@ func _process(delta: float) -> void:
 		return
 	if _pending_press:
 		_pending_time += delta
-		if _pending_time > 0.07:
+		if _pending_time > (0.25 if _free_touch else 0.07):
 			# Still a single finger: start the press now so dragging (links) works.
 			_pending_press = false
 			rig.right.desktop_trigger = true
