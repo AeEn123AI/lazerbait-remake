@@ -1,5 +1,7 @@
 # Lazerbait — Godot remake
 
+Fully vibecoded — None of the code has been human written, and recent commits may have not been reviewed yet. Use with caution
+
 A remake of [Lazerbait](https://store.steampowered.com/app/529150/Lazerbait/) (Taylor Stapleton, Unity 5.4 / SteamVR)
 in **Godot 4.6**. It runs on desktop and in VR (OpenXR), and has **optional passthrough** (mixed reality).
 
