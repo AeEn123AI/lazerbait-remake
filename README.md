@@ -223,3 +223,11 @@ See `scripts/core/debug.gd`. Test runs started with `--autotest` or `--ai-player
 Original game © Taylor Stapleton. Music, sound effects, textures, fonts and tutorial videos come from the original
 game files and are not included in this repository. Liberation Sans: SIL Open Font License (see `assets/fonts/LiberationSans-LICENSE.txt`). The Godot OpenXR
 Vendors plugin is MIT licensed, and the vendor loaders keep their own licences (see the addon folder).
+
+## License
+The code in this repository is released into the public domain under the [Unlicense](LICENSE).
+
+This is an unofficial fan remake, not affiliated with or endorsed by Taylor Stapleton. The repository contains no assets
+from the original game, and the Unlicense covers only the code and other original work here. The original game, its
+assets, and any rights in its design remain with their owner. Third-party components (Liberation Sans, the Godot OpenXR
+Vendors plugin) keep their own licences, as noted above.
